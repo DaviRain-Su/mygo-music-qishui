@@ -131,21 +131,72 @@ async function getQrCode() {
     need_short_url: "false",
   });
   if (!res?.data?.token) throw new Error(t("Couldn't get a QR code: try again"));
+  // csrf token 之类要跨请求保持
+  rememberCookies(res);
   return { token: res.data.token, qr: res.data.qrcode_index_url };
 }
 
-// 问一次扫码状态：确认后响应里带 session_cookie
-async function checkQr(token) {
-  const res = await api(
-    "/passport/web/check_qrconnect/",
-    { aid: 386088, device_platform: "PC", version_code: "3520" },
-    { token },
-  );
-  const data = res?.data ?? {};
-  if (data.session_cookie || String(data.status) === "3") {
-    return { done: true, cookie: data.session_cookie ?? "" };
+// Cookie 罐：passport 接口的 csrf token 要跨请求保持
+const jar = new Map();
+
+function rememberCookies(res) {
+  const lines = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+  for (const line of lines) {
+    const pair = String(line).split(";")[0];
+    const at = pair.indexOf("=");
+    if (at > 0) jar.set(pair.slice(0, at).trim(), pair.slice(at + 1).trim());
   }
-  return { done: false };
+}
+
+const cookiesAsHeader = (pairs) =>
+  Object.entries(pairs)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+
+const parseCookieString = (raw) => {
+  const out = {};
+  for (const part of String(raw || "").split(";")) {
+    const at = part.indexOf("=");
+    if (at > 0) out[part.slice(0, at).trim()] = part.slice(at + 1).trim();
+  }
+  return out;
+};
+
+// 问一次扫码状态；确认后从 Set-Cookie 头收登录 cookie
+async function checkQr(token) {
+  const url = new URL("/passport/web/check_qrconnect/", site);
+  url.searchParams.set("aid", "386088");
+  url.searchParams.set("device_platform", "PC");
+  url.searchParams.set("version_code", "3520");
+  url.searchParams.set("next", "https://api.qishui.com");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Content-Type": "application/x-www-form-urlencoded",
+      cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; "),
+    },
+    body: new URLSearchParams({
+      token,
+      need_logo: "false",
+      need_short_url: "false",
+      is_frontier: "true",
+      is_new_login: "1",
+    }).toString(),
+  });
+  const data = await res.json().catch(() => ({}));
+  const d = data?.data ?? {};
+  console.log("[qishui] check:", JSON.stringify(d).slice(0, 300));
+  // 确认了的信号：status 3 / 响应体带 cookie / 带 redirect_url / Set-Cookie 里有会话
+  const cookies = cookiesFromResponse(res);
+  if (d.session_cookie) Object.assign(cookies, parseCookieString(d.session_cookie));
+  const confirmed =
+    String(d.status) === "3" ||
+    d.session_cookie ||
+    d.redirect_url ||
+    Object.keys(cookies).some((name) => /^(sessionid|sid_guard|sid_tt)/i.test(name));
+  if (!confirmed) return { done: false };
+  return { done: true, cookie: cookiesAsHeader(cookies) };
 }
 
 // ---------- 账号 ----------
@@ -168,7 +219,6 @@ export async function signIn() {
   }
   throw new Error(t("Signing in took too long: try again"));
 }
-
 export async function account() {
   if (!cookie()) return null;
   try {
