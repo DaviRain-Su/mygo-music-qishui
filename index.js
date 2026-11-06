@@ -13,13 +13,13 @@
 
 const site = "https://api.qishui.com";
 
-// 汽色接口认 UA：没有合适的 UA 会拿到空响应
+// 汽水接口使用的客户端 UA。
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) SodaMusic/3.5.2 Chrome/136.0.7103.59 Electron/36.4.0-rs.22.release.main.1 Safari/537.36";
 
 // What the plugin says is in the listener's language, from locales/zh-CN.json.
 // 旧版 app（< 0.1.8）没有 host.t，退回原文。
-const t = host.t || ((s) => s);
+const t = typeof host.t === "function" ? (s) => host.t(s) : (s) => s;
 
 // ---------- 基础 ----------
 
@@ -82,7 +82,6 @@ async function api(pathname, params, body) {
     throw fail("signIn", t("Your Qishui session has ended: sign in again"));
   }
   if (!res.ok) throw new Error(`${pathname}: HTTP ${res.status}`);
-  rememberCookies(res);
   return res.json();
 }
 
@@ -108,207 +107,276 @@ function lunaParams(extra) {
 
 // ---------- 扫码登录 ----------
 
-// 二维码内容：由 token 拼出扫码跳转链接（协议要求带 os / computer_name）
-function scanUrlOf(token) {
-  const u = new URL("https://bff-pc.qishui.com/light/invoke/scan_login");
-  u.searchParams.set("token", token);
-  u.searchParams.set("os", "Windows");
-  u.searchParams.set("computer_name", "MyGo-Music");
-  return u.toString();
+const loginVersion = "0.1.1";
+const sessionNames = ["sessionid", "sessionid_ss", "sid_guard", "sid_tt"];
+let signingIn = false;
+
+// Each attempt owns its cookie jar. Never mix an old login or catalog request into it.
+function loginURL(address) {
+  let url;
+  try { url = new URL(address, site); } catch {
+    throw fail("qishui-redirect", "汽水返回了无效的登录跳转地址。");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.port ||
+      !(url.hostname === "qishui.com" || url.hostname.endsWith(".qishui.com"))) {
+    throw fail("qishui-redirect", "汽水登录跳转超出插件授权范围，已停止，未发送登录凭据。");
+  }
+  return url;
 }
 
-async function getQrCode() {
-  const res = await api("/passport/web/get_qrcode/", {
-    aid: 386088,
-    passport_jssdk_version: "2.4.13",
-    is_from_ttaccountsdk: 1,
-    language: "zh",
-    device_id: deviceId(),
-    install_id: deviceId(),
-    device_platform: "PC",
-    version_code: "3520",
-    next: "https://api.qishui.com",
-    need_logo: "false",
-    need_short_url: "false",
-  });
-  if (!res?.data?.token) throw new Error(t("Couldn't get a QR code: try again"));
-  return { token: res.data.token, qr: res.data.qrcode_index_url };
-}
-
-// Cookie 罐：passport 接口的 csrf token 要跨请求保持
-const jar = new Map();
-
-function rememberCookies(res) {
-  // api() 返回的是解析后的 json，没有 headers；只有拿到原始 Response 才收
-  if (!res?.headers) return;
-  const lines = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+function rememberCookies(jar, response, address) {
+  const headers = response.headers;
+  const lines = typeof headers.getSetCookie === "function"
+    ? headers.getSetCookie()
+    : (headers.get("set-cookie") || "").split(/,(?=\s*[^=;,\s]+=)/);
   for (const line of lines) {
-    const pair = String(line).split(";")[0];
+    const [pair, ...attributes] = line.split(";");
     const at = pair.indexOf("=");
-    if (at > 0) jar.set(pair.slice(0, at).trim(), pair.slice(at + 1).trim());
-  }
-}
-
-function cookiesFromResponse(res) {
-  const out = {};
-  const lines = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
-  for (const line of lines) {
-    const pair = String(line).split(";")[0];
-    const at = pair.indexOf("=");
-    if (at > 0) out[pair.slice(0, at).trim()] = pair.slice(at + 1).trim();
-  }
-  return out;
-}
-
-const cookiesAsHeader = (pairs) =>
-  Object.entries(pairs)
-    .map(([k, v]) => `${k}=${v}`)
-    .join("; ");
-
-const parseCookieString = (raw) => {
-  const out = {};
-  for (const part of String(raw || "").split(";")) {
-    const at = part.indexOf("=");
-    if (at > 0) out[part.slice(0, at).trim()] = part.slice(at + 1).trim();
-  }
-  return out;
-};
-
-// 手动跟重定向，沿途收 Set-Cookie（登录 cookie 在这条链上下发）
-async function followForCookies(url, hops = 5) {
-  const out = {};
-  let current = url;
-  for (let i = 0; i < hops; i++) {
-    const res = await fetch(current, {
-      redirect: "manual",
-      headers: { "User-Agent": UA, cookie: cookiesAsHeader(jar) },
-    });
-    rememberCookies(res);
-    Object.assign(out, cookiesFromResponse(res));
-    const loc = res.headers.get("location");
-    if (res.status >= 300 && res.status < 400 && loc) {
-      current = new URL(loc, current).href;
-      continue;
+    if (at < 1) continue;
+    const name = pair.slice(0, at).trim();
+    const value = pair.slice(at + 1).trim();
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\x00-\x20\x7f]/.test(value)) continue;
+    let domain = address.hostname, hostOnly = true, secure = false, expires = Infinity;
+    let path = address.pathname.slice(0, address.pathname.lastIndexOf("/")) || "/";
+    let maxAge = null;
+    for (const attribute of attributes) {
+      const split = attribute.indexOf("=");
+      const key = (split < 0 ? attribute : attribute.slice(0, split)).trim().toLowerCase();
+      const val = split < 0 ? "" : attribute.slice(split + 1).trim();
+      if (key === "domain") { domain = val.toLowerCase().replace(/^\./, ""); hostOnly = false; }
+      if (key === "path" && val.startsWith("/")) path = val;
+      if (key === "secure") secure = true;
+      if (key === "max-age" && /^-?\d+$/.test(val)) maxAge = Number(val);
+      if (key === "expires" && Number.isFinite(Date.parse(val))) expires = Date.parse(val);
     }
-    break;
+    if (!(domain === "qishui.com" || domain.endsWith(".qishui.com")) ||
+        !(address.hostname === domain || address.hostname.endsWith("." + domain))) continue;
+    if (maxAge !== null) expires = Date.now() + maxAge * 1000;
+    const key = `${domain}\n${path}\n${name}`;
+    if (!value || expires <= Date.now()) jar.delete(key);
+    else jar.set(key, { name, value, domain, hostOnly, path, secure, expires });
   }
-  return out;
 }
 
-const hasSessionCookie = (cookies) =>
-  Object.keys(cookies).some((name) => /^(sessionid|sid_guard|sid_tt)/i.test(name));
+function cookiesAsHeader(jar, address = new URL(site)) {
+  // Object.entries(new Map()) is always empty: iterate the Map itself.
+  return [...jar.values()].filter((c) => c.expires > Date.now() &&
+    (address.hostname === c.domain || (!c.hostOnly && address.hostname.endsWith("." + c.domain))) &&
+    (address.pathname === c.path || address.pathname.startsWith(c.path.endsWith("/") ? c.path : c.path + "/")) &&
+    (!c.secure || address.protocol === "https:"))
+    .sort((a, b) => b.path.length - a.path.length)
+    .map((c) => `${c.name}=${c.value}`).join("; ");
+}
 
-// 问一次扫码状态；确认后从 Set-Cookie 头收登录 cookie
-async function checkQr(token) {
-  const url = new URL("/passport/web/check_qrconnect/", site);
-  // 这两个缺了服务端都会报 4031「版本过低」，必须带上
-  url.searchParams.set("passport_jssdk_version", "2.4.13");
-  url.searchParams.set("is_from_ttaccountsdk", "1");
-  url.searchParams.set("aid", "386088");
-  url.searchParams.set("device_platform", "PC");
-  url.searchParams.set("version_code", "3520");
-  url.searchParams.set("next", "https://api.qishui.com");
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "User-Agent": UA,
-      "Content-Type": "application/x-www-form-urlencoded",
-      cookie: cookiesAsHeader(jar),
-    },
-    body: new URLSearchParams({
-      token,
-      need_logo: "false",
-      need_short_url: "false",
-      is_frontier: "true",
-      is_new_login: "1",
-    }).toString(),
+function hasSessionCookie(header) {
+  return header.split(";").some((part) => {
+    const at = part.indexOf("=");
+    return at > 0 && sessionNames.includes(part.slice(0, at).trim()) &&
+      !["", "deleted", "null", "undefined"].includes(part.slice(at + 1).trim().toLowerCase());
   });
-  const data = await res.json().catch(() => ({}));
-  const d = data?.data ?? {};
-  console.log("[qishui] check:", JSON.stringify(d).slice(0, 300));
-  rememberCookies(res);
+}
 
-  // 二维码过期：服务端会顺手发一个新 token 和新二维码，要换用
-  if (String(d.status) === "expired" || String(d.status) === "4") {
-    return { done: false, expired: true, newToken: d.token, newIndexUrl: d.qrcode_index_url };
+// Only allowlisted, non-sensitive metadata is persisted or printed. No raw response JSON.
+function loginDiagnostic(stage, { status, errorCode, httpStatus, reason } = {}) {
+  const info = { version: loginVersion, stage, at: new Date().toISOString() };
+  const previous = host.storage.get("loginDiagnostic");
+  if (stage === "failed" && previous?.stage === "poll") info.status = previous.status;
+  if (typeof reason === "string" && /^qishui-[a-z-]{1,32}$/.test(reason)) info.reason = reason;
+  if (status !== undefined) {
+    const known = ["new", "scanned", "scaned", "confirmed", "expired", "rejected", "cancelled", "canceled", "1", "2", "3", "4", "5"];
+    info.status = known.includes(String(status)) ? String(status) : "unknown";
   }
+  if (Number.isFinite(errorCode)) info.errorCode = errorCode;
+  if (Number.isFinite(httpStatus)) info.httpStatus = httpStatus;
+  host.storage.set("loginDiagnostic", info);
+  console.log("[qishui] login:", JSON.stringify(info));
+}
 
-  const cookies = cookiesFromResponse(res);
-  if (d.session_cookie) Object.assign(cookies, parseCookieString(d.session_cookie));
-  // 确认了的信号：status 3 / confirmed / 响应体带 cookie / 带 redirect_url / Set-Cookie 里有会话
-  const confirmed =
-    String(d.status) === "3" ||
-    String(d.status) === "confirmed" ||
-    d.session_cookie ||
-    d.redirect_url ||
-    hasSessionCookie(cookies);
-  if (!confirmed) return { done: false };
+function loginPrompt(qr, text) {
+  host.signInPrompt({ ...(qr ? { qr: qr.url } : {}), text: `[汽水 ${loginVersion}] ${text}` });
+}
 
-  // 真正的会话 cookie 往往要再跟一步 redirect_url 才拿得到
-  if (!hasSessionCookie(cookies) && d.redirect_url) {
-    Object.assign(cookies, await followForCookies(d.redirect_url));
+function passportURL(pathname) {
+  const url = new URL(pathname, site);
+  const params = {
+    aid: "386088", passport_jssdk_version: "2.4.13", is_from_ttaccountsdk: "1",
+    language: "zh", device_id: deviceId(), install_id: deviceId(),
+    device_platform: "PC", version_code: "3520", next: site,
+  };
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  return url;
+}
+
+async function loginRequest(jar, address, body, readJSON = true) {
+  const url = loginURL(address);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url.href, {
+      method: body ? "POST" : "GET", redirect: "manual", signal: controller.signal,
+      headers: {
+        "User-Agent": UA, cookie: cookiesAsHeader(jar, url),
+        ...(body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+      },
+      body: body ? new URLSearchParams(body).toString() : undefined,
+    });
+    rememberCookies(jar, response, url);
+    const location = response.headers.get("location");
+    if (response.status >= 300 && response.status < 400 && location) {
+      return { redirect: new URL(location, url).href };
+    }
+    if (!response.ok) {
+      const error = fail("qishui-http", `汽水登录请求失败（HTTP ${response.status}）。`);
+      error.httpStatus = response.status;
+      throw error;
+    }
+    if (!readJSON) return {};
+    let payload;
+    try { payload = await response.json(); } catch {
+      if (controller.signal.aborted) throw fail("qishui-network-timeout", "汽水登录请求超时，请重试。");
+      throw fail("qishui-invalid-response", "汽水登录接口没有返回有效 JSON，已停止等待。");
+    }
+    const data = payload?.data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw fail("qishui-invalid-response", "汽水登录接口返回了无法识别的数据，已停止等待。");
+    }
+    const code = Number(data.error_code ?? payload.error_code ?? 0);
+    if (!Number.isFinite(code) || code !== 0 || payload.message === "error") {
+      const error = fail("qishui-api", code === 2046
+        ? "汽水要求额外安全验证（2046）。当前插件尚未接入官方安全验证窗口，本次未完成登录。"
+        : `汽水登录接口拒绝请求（错误码 ${Number.isFinite(code) ? code : "unknown"}），已停止等待。`);
+      error.apiCode = code;
+      throw error;
+    }
+    return { data };
+  } catch (error) {
+    if (typeof error?.code === "string" && error.code.startsWith("qishui-")) throw error;
+    throw fail(controller.signal.aborted ? "qishui-network-timeout" : "qishui-network",
+      controller.signal.aborted ? "汽水登录请求超时，请重试。" : "无法连接汽水登录服务，请检查网络后重试。");
+  } finally {
+    clearTimeout(timer);
   }
-  if (hasSessionCookie(cookies)) return { done: true, cookie: cookiesAsHeader(cookies) };
-  // 确认了但没拿到会话 cookie：继续等下一轮（服务端可能下一轮才发）
-  return { done: false };
+}
+
+function qrOf(data) {
+  if (typeof data.token !== "string" || !data.token) {
+    throw fail("qishui-invalid-response", "汽水没有返回二维码 token。");
+  }
+  const sourceToken = data.qrcode_index_url
+    ? loginURL(data.qrcode_index_url).searchParams.get("token") : data.token;
+  if (!sourceToken) throw fail("qishui-invalid-response", "汽水二维码链接缺少 token。");
+  const url = new URL("https://bff-pc.qishui.com/light/invoke/scan_login");
+  url.searchParams.set("token", sourceToken);
+  url.searchParams.set("os", "Windows");
+  url.searchParams.set("computer_name", "MyGo-Music");
+  return { token: data.token, url: url.href };
+}
+
+async function getQrCode(jar) {
+  const url = passportURL("/passport/web/get_qrcode/");
+  url.searchParams.set("need_logo", "false");
+  url.searchParams.set("need_short_url", "false");
+  const { data } = await loginRequest(jar, url);
+  if (!data) throw fail("qishui-invalid-response", "汽水没有返回二维码数据。");
+  return qrOf(data);
+}
+
+async function followForCookies(jar, address) {
+  let current = address;
+  for (let hop = 0; hop < 5; hop++) {
+    const { redirect } = await loginRequest(jar, current, undefined, false);
+    if (!redirect) return;
+    current = redirect;
+  }
+  throw fail("qishui-redirect", "汽水登录重定向次数过多，已停止等待。");
+}
+
+async function checkQr(jar, token) {
+  const { data = {}, redirect } = await loginRequest(jar, passportURL("/passport/web/check_qrconnect/"), {
+    token, need_logo: "false", need_short_url: "false", is_frontier: "true", is_new_login: "1", next: site,
+  });
+  const status = String(data.status ?? "");
+  loginDiagnostic("poll", { status });
+  if (status === "expired" || status === "4") return { expired: true, data };
+  if (["cancelled", "canceled", "rejected", "5"].includes(status)) {
+    throw fail("qishui-cancelled", "手机端已取消或拒绝登录，请重新发起登录。");
+  }
+  if (typeof data.session_cookie === "string") {
+    for (const pair of data.session_cookie.split(";")) {
+      // The body contains a Cookie header, not a Set-Cookie attribute list.
+      rememberCookies(jar, { headers: { getSetCookie: () => [`${pair}; Domain=qishui.com; Path=/; Secure`] } }, new URL(site));
+    }
+  }
+  const next = redirect || data.redirect_url;
+  const confirmed = ["confirmed", "3"].includes(status) || Boolean(data.session_cookie) || Boolean(next);
+  if (confirmed) loginPrompt(null, "手机已确认，正在完成登录…");
+  // A redirect is an exchange step, not proof of success; it must issue a session.
+  if (next && !hasSessionCookie(cookiesAsHeader(jar))) {
+    if (typeof next !== "string") throw fail("qishui-invalid-response", "汽水登录跳转地址不是字符串。");
+    await followForCookies(jar, loginURL(next).href);
+  }
+  const session = cookiesAsHeader(jar);
+  if (hasSessionCookie(session)) return { session };
+  if (confirmed) {
+    throw fail("qishui-missing-session", "手机已确认，但汽水未向插件下发登录会话，不能判定为登录成功。请反馈此提示。");
+  }
+  if (!["new", "1", "scanned", "scaned", "2"].includes(status)) {
+    throw fail("qishui-status", "汽水返回了无法识别的扫码状态，已停止等待。请反馈此提示。");
+  }
+  return { scanned: ["scanned", "scaned", "2"].includes(status) };
 }
 
 // ---------- 账号 ----------
 
-export async function signIn() {
-  let qr = await getQrCode();
-  host.signInPrompt({
-    qr: scanUrlOf(qr.token),
-    text: t("Scan the code with the Douyin app to sign in to Qishui"),
-  });
+const defaultAccount = () => ({ id: "qishui", name: "汽水音乐用户" });
 
-  // 三分钟内每两秒问一次
-  for (let i = 0; i < 90; i++) {
-    await sleep(2000);
-    let r;
-    try {
-      r = await checkQr(qr.token);
-    } catch (e) {
-      // 轮询失败不中断登录，下一轮再试
-      console.log("[qishui] poll error:", e?.message || e);
-      continue;
-    }
-    // 二维码过期：换服务端发的新码，继续等
-    if (r.expired && r.newToken) {
-      qr = { token: r.newToken, qr: r.newIndexUrl };
-      host.signInPrompt({
-        qr: scanUrlOf(qr.token),
-        text: t("The code expired: scan the new one"),
-      });
-      continue;
-    }
-    if (r.done && r.cookie) {
-      host.storage.set("cookie", r.cookie);
-      return account() || { id: "qishui", name: "Qishui" };
-    }
-  }
-  throw new Error(t("Signing in took too long: try again"));
-}
-export async function account() {
-  if (!cookie()) return null;
+export async function signIn() {
+  if (signingIn) throw fail("qishui-busy", "登录正在进行，请先完成当前登录。");
+  signingIn = true;
+  const jar = new Map();
+  const deadline = Date.now() + 180000;
   try {
-    const r = await api("/luna/pc/me", lunaParams({}));
-    const data = r?.data ?? {};
-    const name = data.nickname || data.name || data.user_name || "";
-    return {
-      id: String(data.user_id || data.uid || "qishui"),
-      name: name || "Qishui",
-      imageUrl: data.avatar_url || data.image_url || undefined,
-    };
-  } catch (e) {
-    if (e.code === "signIn") throw e;
-    // 拿不到资料不算掉线
-    return { id: "qishui", name: "Qishui" };
+    loginDiagnostic("starting");
+    let qr = await getQrCode(jar);
+    loginPrompt(qr, "请用抖音 App 扫码，并在手机上确认登录。");
+    for (let poll = 0; poll < 90 && Date.now() < deadline; poll++) {
+      await sleep(2000);
+      if (Date.now() >= deadline) break;
+      const result = await checkQr(jar, qr.token);
+      if (result.expired) {
+        qr = result.data.token ? qrOf(result.data) : await getQrCode(jar);
+        loginPrompt(qr, "二维码已过期，请扫描新的二维码。");
+      } else if (result.session) {
+        const me = defaultAccount();
+        host.storage.set("cookie", result.session);
+        host.storage.set("account", me);
+        loginDiagnostic("success");
+        loginPrompt(null, "登录会话已保存，正在进入汽水音乐…");
+        // MyGo closes its QR dialog only after this export resolves.
+        // /me may require additional signing or hang; never wait for it here.
+        return me;
+      } else if (result.scanned) {
+        loginPrompt(qr, "已扫码，请在手机上点击确认登录。");
+      }
+    }
+    throw fail("qishui-timeout", "扫码登录超时，请重新发起登录。");
+  } catch (error) {
+    loginDiagnostic("failed", { reason: error?.code, errorCode: error?.apiCode, httpStatus: error?.httpStatus });
+    throw error;
+  } finally {
+    signingIn = false;
+    jar.clear();
   }
+}
+
+export function account() {
+  if (!hasSessionCookie(cookie())) return null;
+  return host.storage.get("account") || defaultAccount();
 }
 
 export function signOut() {
   host.storage.remove("cookie");
+  host.storage.remove("account");
 }
 
 // ---------- 曲目：汽水对象转 app 的格式 ----------
