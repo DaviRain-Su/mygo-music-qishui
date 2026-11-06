@@ -82,6 +82,7 @@ async function api(pathname, params, body) {
     throw fail("signIn", t("Your Qishui session has ended: sign in again"));
   }
   if (!res.ok) throw new Error(`${pathname}: HTTP ${res.status}`);
+  rememberCookies(res);
   return res.json();
 }
 
@@ -131,8 +132,6 @@ async function getQrCode() {
     need_short_url: "false",
   });
   if (!res?.data?.token) throw new Error(t("Couldn't get a QR code: try again"));
-  // csrf token 之类要跨请求保持
-  rememberCookies(res);
   return { token: res.data.token, qr: res.data.qrcode_index_url };
 }
 
@@ -140,12 +139,25 @@ async function getQrCode() {
 const jar = new Map();
 
 function rememberCookies(res) {
+  // api() 返回的是解析后的 json，没有 headers；只有拿到原始 Response 才收
+  if (!res?.headers) return;
   const lines = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
   for (const line of lines) {
     const pair = String(line).split(";")[0];
     const at = pair.indexOf("=");
     if (at > 0) jar.set(pair.slice(0, at).trim(), pair.slice(at + 1).trim());
   }
+}
+
+function cookiesFromResponse(res) {
+  const out = {};
+  const lines = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+  for (const line of lines) {
+    const pair = String(line).split(";")[0];
+    const at = pair.indexOf("=");
+    if (at > 0) out[pair.slice(0, at).trim()] = pair.slice(at + 1).trim();
+  }
+  return out;
 }
 
 const cookiesAsHeader = (pairs) =>
@@ -165,6 +177,9 @@ const parseCookieString = (raw) => {
 // 问一次扫码状态；确认后从 Set-Cookie 头收登录 cookie
 async function checkQr(token) {
   const url = new URL("/passport/web/check_qrconnect/", site);
+  // 这两个缺了服务端都会报 4031「版本过低」，必须带上
+  url.searchParams.set("passport_jssdk_version", "2.4.13");
+  url.searchParams.set("is_from_ttaccountsdk", "1");
   url.searchParams.set("aid", "386088");
   url.searchParams.set("device_platform", "PC");
   url.searchParams.set("version_code", "3520");
@@ -187,6 +202,7 @@ async function checkQr(token) {
   const data = await res.json().catch(() => ({}));
   const d = data?.data ?? {};
   console.log("[qishui] check:", JSON.stringify(d).slice(0, 300));
+  rememberCookies(res);
   // 确认了的信号：status 3 / 响应体带 cookie / 带 redirect_url / Set-Cookie 里有会话
   const cookies = cookiesFromResponse(res);
   if (d.session_cookie) Object.assign(cookies, parseCookieString(d.session_cookie));
