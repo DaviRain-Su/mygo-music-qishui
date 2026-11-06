@@ -18,7 +18,8 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) SodaMusic/3.5.2 Chrome/136.0.7103.59 Electron/36.4.0-rs.22.release.main.1 Safari/537.36";
 
 // What the plugin says is in the listener's language, from locales/zh-CN.json.
-const t = host.t;
+// 旧版 app（< 0.1.8）没有 host.t，退回原文。
+const t = host.t || ((s) => s);
 
 // ---------- 基础 ----------
 
