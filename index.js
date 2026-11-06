@@ -174,6 +174,30 @@ const parseCookieString = (raw) => {
   return out;
 };
 
+// 手动跟重定向，沿途收 Set-Cookie（登录 cookie 在这条链上下发）
+async function followForCookies(url, hops = 5) {
+  const out = {};
+  let current = url;
+  for (let i = 0; i < hops; i++) {
+    const res = await fetch(current, {
+      redirect: "manual",
+      headers: { "User-Agent": UA, cookie: cookiesAsHeader(jar) },
+    });
+    rememberCookies(res);
+    Object.assign(out, cookiesFromResponse(res));
+    const loc = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && loc) {
+      current = new URL(loc, current).href;
+      continue;
+    }
+    break;
+  }
+  return out;
+}
+
+const hasSessionCookie = (cookies) =>
+  Object.keys(cookies).some((name) => /^(sessionid|sid_guard|sid_tt)/i.test(name));
+
 // 问一次扫码状态；确认后从 Set-Cookie 头收登录 cookie
 async function checkQr(token) {
   const url = new URL("/passport/web/check_qrconnect/", site);
@@ -189,7 +213,7 @@ async function checkQr(token) {
     headers: {
       "User-Agent": UA,
       "Content-Type": "application/x-www-form-urlencoded",
-      cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; "),
+      cookie: cookiesAsHeader(jar),
     },
     body: new URLSearchParams({
       token,
@@ -203,22 +227,36 @@ async function checkQr(token) {
   const d = data?.data ?? {};
   console.log("[qishui] check:", JSON.stringify(d).slice(0, 300));
   rememberCookies(res);
-  // 确认了的信号：status 3 / 响应体带 cookie / 带 redirect_url / Set-Cookie 里有会话
+
+  // 二维码过期：服务端会顺手发一个新 token 和新二维码，要换用
+  if (String(d.status) === "expired" || String(d.status) === "4") {
+    return { done: false, expired: true, newToken: d.token, newIndexUrl: d.qrcode_index_url };
+  }
+
   const cookies = cookiesFromResponse(res);
   if (d.session_cookie) Object.assign(cookies, parseCookieString(d.session_cookie));
+  // 确认了的信号：status 3 / confirmed / 响应体带 cookie / 带 redirect_url / Set-Cookie 里有会话
   const confirmed =
     String(d.status) === "3" ||
+    String(d.status) === "confirmed" ||
     d.session_cookie ||
     d.redirect_url ||
-    Object.keys(cookies).some((name) => /^(sessionid|sid_guard|sid_tt)/i.test(name));
+    hasSessionCookie(cookies);
   if (!confirmed) return { done: false };
-  return { done: true, cookie: cookiesAsHeader(cookies) };
+
+  // 真正的会话 cookie 往往要再跟一步 redirect_url 才拿得到
+  if (!hasSessionCookie(cookies) && d.redirect_url) {
+    Object.assign(cookies, await followForCookies(d.redirect_url));
+  }
+  if (hasSessionCookie(cookies)) return { done: true, cookie: cookiesAsHeader(cookies) };
+  // 确认了但没拿到会话 cookie：继续等下一轮（服务端可能下一轮才发）
+  return { done: false };
 }
 
 // ---------- 账号 ----------
 
 export async function signIn() {
-  const qr = await getQrCode();
+  let qr = await getQrCode();
   host.signInPrompt({
     qr: scanUrlOf(qr.token),
     text: t("Scan the code with the Douyin app to sign in to Qishui"),
@@ -227,9 +265,25 @@ export async function signIn() {
   // 三分钟内每两秒问一次
   for (let i = 0; i < 90; i++) {
     await sleep(2000);
-    const { done, cookie: session } = await checkQr(qr.token);
-    if (done && session) {
-      host.storage.set("cookie", session);
+    let r;
+    try {
+      r = await checkQr(qr.token);
+    } catch (e) {
+      // 轮询失败不中断登录，下一轮再试
+      console.log("[qishui] poll error:", e?.message || e);
+      continue;
+    }
+    // 二维码过期：换服务端发的新码，继续等
+    if (r.expired && r.newToken) {
+      qr = { token: r.newToken, qr: r.newIndexUrl };
+      host.signInPrompt({
+        qr: scanUrlOf(qr.token),
+        text: t("The code expired: scan the new one"),
+      });
+      continue;
+    }
+    if (r.done && r.cookie) {
+      host.storage.set("cookie", r.cookie);
       return account() || { id: "qishui", name: "Qishui" };
     }
   }
