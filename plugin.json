@@ -1,0 +1,22 @@
+{
+  "id": "qishui",
+  "name": "汽水音乐",
+  "version": "0.1.0",
+  "minAppVersion": "0.1.8",
+  "main": "index.js",
+  "playback": "stream",
+  "permissions": {
+    "network": [
+      "api.qishui.com",
+      "api5-lq.qishui.com",
+      "*.qishui.com"
+    ],
+    "process": [
+      "ffmpeg"
+    ]
+  },
+  "navigation": [
+    { "builtin": "home" },
+    { "builtin": "liked" }
+  ]
+}

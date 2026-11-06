@@ -1,0 +1,11 @@
+{
+  "Your Qishui session has ended: sign in again": "汽水音乐的登录已过期，请重新登录",
+  "Couldn't get a QR code: try again": "获取二维码失败，请重试",
+  "Scan the code with the Douyin app to sign in to Qishui": "用抖音 App 扫码登录汽水音乐",
+  "Signing in took too long: try again": "登录超时，请重试",
+  "No playable audio for this track": "这首歌暂时无法播放",
+  "Qishui plays through ffmpeg: install it with Homebrew, or so that it's on the PATH": "汽水音乐播放需要 ffmpeg：请安装后重试",
+  "the audio didn't start in time": "音频加载超时",
+  "Home": "首页",
+  "Recommended for you": "为你推荐"
+}
