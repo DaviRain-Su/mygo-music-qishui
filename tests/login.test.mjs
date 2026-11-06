@@ -89,6 +89,7 @@ test("poll sends the QR request's CSRF cookie and the same device parameters", a
   });
   await plugin.signIn();
   assert.equal(new Headers(observed.headers).get("cookie"), `passport_csrf_token=${csrf}`);
+  assert.equal(new Headers(observed.headers).get("x-tt-passport-csrf-token"), csrf);
   assert.equal(observed.url.searchParams.get("passport_jssdk_version"), "2.4.13");
   assert.equal(observed.url.searchParams.get("is_from_ttaccountsdk"), "1");
   assert.ok(observed.url.searchParams.get("device_id"));
@@ -120,7 +121,7 @@ for (const status of ["confirmed", "3", 3]) {
 }
 
 // API errors used to look like "still waiting", even after a successful phone scan.
-for (const errorCode of [2046, 4031]) {
+for (const errorCode of [7, 2046, 4031]) {
   test(`API error ${errorCode} stops polling and stays visible`, async () => {
     let polls = 0;
     const { plugin, storage } = await loadPlugin(() => {
@@ -198,6 +199,60 @@ test("unknown status is redacted", async () => {
   assert.equal(JSON.stringify([diagnostic, logs]).includes(token), false);
 });
 
+// The official Passport SDK mirrors this cookie into x-tt-passport-csrf-token.
+test("CSRF header uses the default token when the primary token is absent", async () => {
+  const { plugin } = await loadPlugin((request) => {
+    assert.equal(new Headers(request.headers).get("x-tt-passport-csrf-token"), csrf);
+    return pollResponse({ status: "confirmed", session_cookie: `sessionid=${session}` });
+  }, { qr: () => json({ data: { error_code: 0, token } }, {
+    "set-cookie": `passport_csrf_token_default=${csrf}; Domain=qishui.com; Path=/; Secure`,
+  }) });
+  assert.ok((await plugin.signIn()).id);
+});
+
+test("does not send an empty CSRF header when no CSRF cookie was issued", async () => {
+  const { plugin } = await loadPlugin((request) => {
+    assert.equal(new Headers(request.headers).get("x-tt-passport-csrf-token"), null);
+    return pollResponse({ status: "confirmed", session_cookie: `sessionid=${session}` });
+  }, { qr: () => json({ data: { error_code: 0, token } }) });
+  assert.ok((await plugin.signIn()).id);
+});
+
+// A token rotated during scanning must replace the header for the next POST.
+test("CSRF header follows cookie rotation after scanned status", async () => {
+  let polls = 0;
+  const { plugin } = await loadPlugin((request) => {
+    const expected = polls++ === 0 ? csrf : "rotated-csrf";
+    assert.equal(new Headers(request.headers).get("x-tt-passport-csrf-token"), expected);
+    if (polls === 1) return pollResponse({ status: "scanned" }, {
+      "set-cookie": "passport_csrf_token=rotated-csrf; Domain=qishui.com; Path=/; Secure",
+    });
+    return pollResponse({ status: "confirmed", session_cookie: `sessionid=${session}` });
+  });
+  assert.ok((await plugin.signIn()).id);
+  assert.equal(polls, 2);
+});
+
+// Do not infer the meaning of code 7 from its number; use only explicit server wording.
+test("code 7 can report a redacted CSRF classification without logging its description", async () => {
+  const { plugin, storage, logs } = await loadPlugin(() => json({
+    message: "error", data: { error_code: 7, description: `CSRF token mismatch: ${csrf}; sessionid=${session}`, token },
+  }));
+  await assert.rejects(plugin.signIn(), (error) => error.message.includes("7") && error.message.includes("CSRF"));
+  const diagnostic = storage.get("loginDiagnostic");
+  assert.equal(diagnostic.serverReason, "csrf");
+  assert.equal(diagnostic.errorCode, 7);
+  const output = JSON.stringify([diagnostic, logs]);
+  for (const secret of [token, csrf, session]) assert.equal(output.includes(secret), false);
+  assert.equal(output.includes("mismatch"), false);
+});
+
+test("code 7 without an explanation is not mislabeled as CSRF", async () => {
+  const { plugin, storage } = await loadPlugin(() => json({ message: "error", data: { error_code: 7 } }));
+  await assert.rejects(plugin.signIn(), (error) => error.message.includes("7") && !error.message.includes("CSRF"));
+  assert.equal(storage.get("loginDiagnostic").serverReason, "unknown");
+});
+
 // The dialog should tell apart scanning and actually confirming on the phone.
 test("new -> scanned -> confirmed updates progress and completes", async () => {
   const states = ["new", "scanned", "confirmed"];
@@ -258,6 +313,7 @@ test("redirects respect cookie host scope", async () => {
       return pollResponse({ status: "confirmed", redirect_url: "https://bff-pc.qishui.com/exchange" });
     }
     assert.equal(new Headers(request.headers).get("cookie"), "");
+    assert.equal(new Headers(request.headers).get("x-tt-passport-csrf-token"), null);
     return new Response("ok", { headers: { "set-cookie": `sessionid=${session}; Domain=qishui.com; Path=/; Secure` } });
   }, { qr: () => json({ data: { error_code: 0, token } }, {
     "set-cookie": `passport_csrf_token=${csrf}; Path=/; Secure`,

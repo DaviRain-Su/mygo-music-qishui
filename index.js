@@ -107,7 +107,7 @@ function lunaParams(extra) {
 
 // ---------- 扫码登录 ----------
 
-const loginVersion = "0.1.1";
+const loginVersion = "0.1.2";
 const sessionNames = ["sessionid", "sessionid_ss", "sid_guard", "sid_tt"];
 let signingIn = false;
 
@@ -176,8 +176,28 @@ function hasSessionCookie(header) {
   });
 }
 
+function passportCSRF(header) {
+  const valueOf = (name) => {
+    for (const part of header.split(";")) {
+      const at = part.indexOf("=");
+      if (at > 0 && part.slice(0, at).trim() === name) return part.slice(at + 1).trim();
+    }
+    return "";
+  };
+  return valueOf("passport_csrf_token") || valueOf("passport_csrf_token_default");
+}
+
+// Classify only explicit server wording; a numeric error alone does not identify its cause.
+function loginServerReason(data) {
+  const description = typeof data.description === "string" ? data.description.slice(0, 1024) : "";
+  if (/\b(?:csrf|xsrf)\b/i.test(description)) return "csrf";
+  if (/signature|签名|a_bogus|x-helios|x-medusa/i.test(description)) return "signature";
+  if (/expired|过期/i.test(description)) return "expired";
+  return "unknown";
+}
+
 // Only allowlisted, non-sensitive metadata is persisted or printed. No raw response JSON.
-function loginDiagnostic(stage, { status, errorCode, httpStatus, reason } = {}) {
+function loginDiagnostic(stage, { status, errorCode, httpStatus, reason, serverReason } = {}) {
   const info = { version: loginVersion, stage, at: new Date().toISOString() };
   const previous = host.storage.get("loginDiagnostic");
   if (stage === "failed" && previous?.stage === "poll") info.status = previous.status;
@@ -188,6 +208,7 @@ function loginDiagnostic(stage, { status, errorCode, httpStatus, reason } = {}) 
   }
   if (Number.isFinite(errorCode)) info.errorCode = errorCode;
   if (Number.isFinite(httpStatus)) info.httpStatus = httpStatus;
+  if (["csrf", "signature", "expired", "verification", "unknown"].includes(serverReason)) info.serverReason = serverReason;
   host.storage.set("loginDiagnostic", info);
   console.log("[qishui] login:", JSON.stringify(info));
 }
@@ -212,10 +233,15 @@ async function loginRequest(jar, address, body, readJSON = true) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
   try {
+    const cookieHeader = cookiesAsHeader(jar, url);
+    // Match the official Passport SDK: cookie + identical CSRF request header.
+    // Do not attach this header to another host or an unrelated redirect path.
+    const csrf = url.origin === site && url.pathname.startsWith("/passport/") ? passportCSRF(cookieHeader) : "";
     const response = await fetch(url.href, {
       method: body ? "POST" : "GET", redirect: "manual", signal: controller.signal,
       headers: {
-        "User-Agent": UA, cookie: cookiesAsHeader(jar, url),
+        "User-Agent": UA, cookie: cookieHeader,
+        ...(csrf ? { "x-tt-passport-csrf-token": csrf } : {}),
         ...(body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
       },
       body: body ? new URLSearchParams(body).toString() : undefined,
@@ -242,10 +268,17 @@ async function loginRequest(jar, address, body, readJSON = true) {
     }
     const code = Number(data.error_code ?? payload.error_code ?? 0);
     if (!Number.isFinite(code) || code !== 0 || payload.message === "error") {
+      const serverReason = code === 2046 ? "verification" : loginServerReason(data);
+      const hint = {
+        csrf: "服务端说明：CSRF 校验未通过。",
+        signature: "服务端说明：请求签名校验未通过。",
+        expired: "服务端说明：登录请求已过期。",
+      }[serverReason] || "";
       const error = fail("qishui-api", code === 2046
         ? "汽水要求额外安全验证（2046）。当前插件尚未接入官方安全验证窗口，本次未完成登录。"
-        : `汽水登录接口拒绝请求（错误码 ${Number.isFinite(code) ? code : "unknown"}），已停止等待。`);
+        : `汽水登录接口拒绝请求（错误码 ${Number.isFinite(code) ? code : "unknown"}），已停止等待。${hint}`);
       error.apiCode = code;
+      error.serverReason = serverReason;
       throw error;
     }
     return { data };
@@ -361,7 +394,9 @@ export async function signIn() {
     }
     throw fail("qishui-timeout", "扫码登录超时，请重新发起登录。");
   } catch (error) {
-    loginDiagnostic("failed", { reason: error?.code, errorCode: error?.apiCode, httpStatus: error?.httpStatus });
+    loginDiagnostic("failed", {
+      reason: error?.code, errorCode: error?.apiCode, httpStatus: error?.httpStatus, serverReason: error?.serverReason,
+    });
     throw error;
   } finally {
     signingIn = false;

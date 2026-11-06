@@ -1,7 +1,7 @@
 {
   "id": "qishui",
   "name": "汽水音乐",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "minAppVersion": "0.1.7",
   "main": "index.js",
   "playback": "stream",

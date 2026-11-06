@@ -18,7 +18,7 @@ func TestQishuiLoginRegression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"body-cookie", "header-cookie", "redirect-cookie", "security-2046", "missing-session"} {
+	for _, scenario := range []string{"body-cookie", "header-cookie", "redirect-cookie", "api-error-7", "security-2046", "missing-session"} {
 		t.Run(scenario, func(t *testing.T) {
 			var mu sync.Mutex
 			var calls []string
@@ -35,6 +35,9 @@ func TestQishuiLoginRegression(t *testing.T) {
 					if got := r.Header.Get("Cookie"); got != "passport_csrf_token=runtime-csrf" {
 						t.Errorf("missing CSRF cookie: %q", got)
 					}
+					if got := r.Header.Get("X-Tt-Passport-Csrf-Token"); got != "runtime-csrf" {
+						t.Errorf("missing CSRF header: %q", got)
+					}
 					if r.URL.Query().Get("passport_jssdk_version") != "2.4.13" || r.URL.Query().Get("is_from_ttaccountsdk") != "1" {
 						t.Error("missing passport parameters")
 					}
@@ -44,7 +47,9 @@ func TestQishuiLoginRegression(t *testing.T) {
 					if r.PostForm.Get("token") != "runtime-token" {
 						t.Error("wrong polling token")
 					}
-					if scenario == "security-2046" {
+					if scenario == "api-error-7" {
+						fmt.Fprint(w, `{"message":"error","data":{"error_code":7}}`)
+					} else if scenario == "security-2046" {
 						fmt.Fprint(w, `{"message":"error","data":{"error_code":2046}}`)
 					} else if scenario == "missing-session" {
 						fmt.Fprint(w, `{"message":"success","data":{"error_code":0,"status":"confirmed"}}`)
@@ -100,9 +105,12 @@ globalThis.setTimeout = (fn, ms) => realSetTimeout(fn, ms === 2000 ? 1 : ms);
 			}()
 			select {
 			case got := <-finished:
-				if scenario == "security-2046" || scenario == "missing-session" {
+				if scenario == "api-error-7" || scenario == "security-2046" || scenario == "missing-session" {
 					if got.err == nil {
 						t.Fatal("login reported success without a valid session")
+					}
+					if scenario == "api-error-7" && !strings.Contains(got.err.Error(), "7") {
+						t.Fatal(got.err)
 					}
 					if scenario == "security-2046" && !strings.Contains(got.err.Error(), "2046") {
 						t.Fatal(got.err)
