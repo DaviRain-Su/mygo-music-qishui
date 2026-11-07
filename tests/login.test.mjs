@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import features from '../helper/features.cjs';
+import protocol from '../helper/protocol.cjs';
 
 const source = await readFile(new URL('../index.js', import.meta.url), 'utf8');
 const secret = 'sessionid=test-session-secret';
 const user = { id: 'user-42', name: 'Test listener' };
 const success = { cookie: secret, account: user };
 async function loadPlugin(t, handler, options = {}) {
+  const service = new features.Features({account:async()=>user,api:(path,params,body)=>handler({op:'request',params:{path,params,body}})});
   const storage = new Map(options.storage || []), calls = [], prompts = [], logs = [], processes = [];
   function process() {
     const lines = [], readers = []; let closed = false, exit;
@@ -19,9 +22,9 @@ async function loadPlugin(t, handler, options = {}) {
         queueMicrotask(async () => {
           if (request.op === 'hello') { send({ id: request.id, ok: true, result: { protocol: options.protocol || 1, version: '0.2.0' } }); return; }
           try {
-            const result = await handler(request, send, proc);
+            const result = request.op === 'catalog' ? await service.dispatch(request.params) : await handler(request, send, proc);
             if (!closed) send({ id: request.id, ok: true, result });
-          } catch (error) { if (!closed) send({ id: request.id, ok: false, error }); }
+          } catch (error) { if (!closed) send({ id: request.id, ok: false, error: protocol.publicError(error) }); }
         });
       },
       readLine() { return lines.length ? Promise.resolve(lines.shift()) : closed ? Promise.resolve(null) : new Promise(resolve => readers.push(resolve)); },
@@ -51,7 +54,7 @@ async function loadPlugin(t, handler, options = {}) {
   });
   const module = new vm.SourceTextModule(source, { context });
   await module.link(() => { throw new Error('The plugin entry stays self-contained'); }); await module.evaluate();
-  t.after(() => { for (const proc of processes) proc.kill(); });
+  t.after(() => { service.reset(); for (const proc of processes) proc.kill(); });
   return { plugin: module.namespace, storage, calls, prompts, logs, processes };
 }
 
@@ -140,9 +143,9 @@ test('signOut clears both the private SDK session and plugin cache', async t => 
 });
 
 test('catalog requests use the same helper, not a separate unsigned cookie request', async t => {
-  const { plugin, calls } = await loadPlugin(t, async request => request.op === 'signIn' ? success : { data: { tracks: [] } });
+  const { plugin, calls } = await loadPlugin(t, async request => request.op === 'signIn' ? success : { result_groups:[{id:'tracks',data:[],has_more:false}] });
   await plugin.signIn(); await plugin.search({ query: 'test', kind: 'tracks', offset: 0 });
-  assert.ok(calls.some(c => c.op === 'request' && c.params.path === '/luna/pc/search/track'));
+  assert.ok(calls.some(c => c.op === 'catalog' && c.params.method === 'search'));
 });
 
 const trackFixture = {
@@ -156,9 +159,8 @@ const trackFixture = {
 test('logged-in home sends the PC feed POST and maps track wrappers in milliseconds', async t => {
   const { plugin, calls } = await loadPlugin(t, async request => request.op === 'signIn' ? success : { items: [trackFixture], has_more: true });
   await plugin.signIn(); const home = await plugin.home();
-  const request = calls.find(c => c.op === 'request');
-  assert.equal(request.params.path, '/luna/pc/feed/song-tab');
-  assert.equal(request.params.body.is_first_request, true);
+  const request = calls.find(c => c.op === 'catalog');
+  assert.equal(request.params.method, 'home');
   assert.equal(home.sections[0].tracks[0].id, 'track-7');
   assert.equal(home.sections[0].tracks[0].duration, 123000);
   assert.equal(home.sections[0].tracks[0].artists[0].name, 'Fixture artist');
@@ -166,7 +168,7 @@ test('logged-in home sends the PC feed POST and maps track wrappers in milliseco
 });
 
 test('search handles root result_groups rather than requiring data.data', async t => {
-  const { plugin } = await loadPlugin(t, async request => request.op === 'signIn' ? success : { result_groups: [{ data: [trackFixture], has_more: false }] });
+  const { plugin } = await loadPlugin(t, async request => request.op === 'signIn' ? success : { result_groups: [{ id:'tracks', data: [trackFixture], has_more: false }] });
   await plugin.signIn(); const found = await plugin.search({ query: 'test', kind: 'tracks', offset: 0 });
   assert.equal(found.tracks.length, 1); assert.equal(found.tracks[0].id, 'track-7');
 });
@@ -199,4 +201,21 @@ test('diagnostics do not contain private result cookies, QR tokens or account da
   await plugin.signIn();
   const output = JSON.stringify([storage.get('loginDiagnostic'), logs]);
   for (const value of ['test-session-secret', user.id, user.name]) assert.equal(output.includes(value), false);
+});
+
+for (const type of ['mp3','flac']) test(`stream preserves actual ${type} output and does not report played`, async t => {
+  const audio={url:`file:///private/plugin-data/qishui/auth-sdk/audio-cache/run-test/0123456789abcdef0123456789abcdef.${type}`,type,quality:type==='flac'?'lossless':'high',size:4096,...(type==='mp3'?{bitRate:192000}:{})};
+  const {plugin,calls}=await loadPlugin(t,async r=>r.op==='signIn'?success:audio);
+  await plugin.signIn();const result=await plugin.stream({id:'t1',quality:audio.quality});
+  assert.equal(result.type,type);assert.equal(result.quality,audio.quality);assert.equal(result.bitRate,audio.bitRate);
+  assert.equal(calls.some(r=>r.op==='catalog'),false);
+});
+for (const [type,ext] of [['flac','mp3'],['mp3','flac'],['aac','aac']]) test(`stream rejects type/extension ${type}/${ext}`,async t=>{
+  const {plugin}=await loadPlugin(t,async r=>r.op==='signIn'?success:{url:`file:///private/plugin-data/qishui/auth-sdk/audio-cache/run-test/0123456789abcdef0123456789abcdef.${ext}`,type,size:4096});
+  await plugin.signIn();await assert.rejects(plugin.stream({id:'t1'}));
+});
+test('bridge timeout during a mutation reports unknown without inventing a confirmed count',async t=>{
+ const {plugin}=await loadPlugin(t,async r=>r.op==='signIn'?success:new Promise(()=>{}));
+ await plugin.signIn();
+ await assert.rejects(plugin.addToPlaylist({id:'p1',trackIds:['t1','t2']}),e=>e.code==='qishui-mutation-unknown'&&e.confirmed===undefined&&!e.message.includes('secret'));
 });

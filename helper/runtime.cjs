@@ -7,6 +7,7 @@ const { loadRuntime } = require('./dependencies.cjs');
 const { ensureAssets, ASSETS } = require('./assets.cjs');
 const { fault, apiURL } = require('./protocol.cjs');
 const { runLogin, hasSession } = require('./auth-flow.cjs');
+const { Features, featureContext } = require('./features.cjs');
 const { Playback } = require('./playback.cjs');
 const API = 'https://api.qishui.com';
 const APP_VERSION = '3.5.2';
@@ -45,6 +46,7 @@ class Runtime {
     this.msToken = ''; this.issuedToken = ''; this.observed = null; this.controller = null; this.signedRequests = new Map();
     this.sdkReady = false; this.native = null; this.nativeLoaded = false; this.locked = false;
     this.dependencies = loadRuntime(dataDir);
+    this.features = new Features({ api: (...args) => this.api(...args), account: () => this.featureAccount() });
     this.qrcode = this.dependencies.require('qrcode');
     this.playback = new Playback({ dataDir, api: (...args) => this.api(...args) });
   }
@@ -225,7 +227,10 @@ class Runtime {
     return this.native;
   }
   async api(pathname, params = {}, body, signal) {
+    signal = signal || featureContext.getStore()?.signal;
+    signal?.throwIfAborted();
     await this.base();
+    signal?.throwIfAborted();
     const url = apiURL(pathname, params);
     const common = {
       aid: '386088', app_name: 'luna_pc', region: 'cn', geo_region: 'cn', os_region: 'cn', sim_region: '',
@@ -244,6 +249,7 @@ class Runtime {
     const headers = { 'User-Agent': ua, Cookie: await this.cookieHeader(), ...(text ? { 'Content-Type': 'application/json; charset=utf-8' } : {}) };
     for (let index = 0; index + 1 < signature.length; index += 2) if (/^x-[a-z0-9-]+$/i.test(signature[index])) headers[signature[index]] = signature[index + 1];
     if (!Object.keys(headers).some(k => /^x-(helios|medusa)$/i.test(k))) throw fault('sdk');
+    signal?.throwIfAborted();
     let response;
     try { response = await fetch(url, { method: text ? 'POST' : 'GET', headers, body: text, redirect: 'error', signal: signal || AbortSignal.timeout(20000) }); }
     catch { throw fault('network'); }
@@ -275,7 +281,8 @@ class Runtime {
     finally { if (this.window && !this.window.isDestroyed()) this.window.hide(); }
   }
   async signIn(showWindow = false) {
-    if (this.locked) throw fault('busy'); this.locked = true; this.controller = new AbortController();
+    if (this.locked || this.resetting) throw fault('busy'); this.locked = true; this.controller = new AbortController();
+    this.features.reset();
     const timer = setTimeout(() => this.cancel(), 240000);
     try {
       return await runLogin({
@@ -301,23 +308,38 @@ class Runtime {
     }
   }
   async account() { await this.base(); return hasSession(await this.cookieHeader()) ? this.finish() : null; }
+  async featureAccount() {
+    if (this.locked || this.resetting) throw fault('busy');
+    return profileOf(await this.api('/luna/pc/me'));
+  }
+  catalog(params) {
+    if (this.locked || this.resetting) throw fault('busy');
+    return this.features.dispatch(params);
+  }
   cancel() {
+    this.features.reset();
     this.controller?.abort();
     if (this.window && !this.window.isDestroyed()) this.exec('cancel').catch(() => {});
   }
   async stream(params) {
-    if (this.locked) throw fault('busy');
+    if (this.locked || this.resetting) throw fault('busy');
     if (!hasSession(await this.cookieHeader())) throw fault('session');
     return this.playback.prepare(params);
   }
   async signOut() {
-    this.cancel(); await this.base();
-    await this.playback.close();
-    this.playback = new Playback({ dataDir: this.dataDir, api: (...args) => this.api(...args) });
-    if (this.window && !this.window.isDestroyed()) this.window.destroy();
-    await this.ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'] });
-    this.msToken = ''; this.issuedToken = ''; this.sdkReady = false;
+    if (this.resetting) throw fault('busy');
+    this.resetting = true;
+    this.cancel();
+    try {
+      await this.base();
+      await this.playback.close();
+      this.playback = new Playback({ dataDir: this.dataDir, api: (...args) => this.api(...args) });
+      if (this.window && !this.window.isDestroyed()) this.window.destroy();
+      await this.ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'] });
+      this.msToken = ''; this.issuedToken = ''; this.sdkReady = false;
+    } finally { this.features.reset(); this.resetting = false; }
   }
+
   async close() {
     this.cancel(); if (this.window && !this.window.isDestroyed()) this.window.destroy();
     await this.playback.close();

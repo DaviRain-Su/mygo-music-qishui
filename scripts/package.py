@@ -20,7 +20,7 @@ def package_files(root):
             if allowed and not file.name.startswith('.'):
                 paths.append(file)
     # Include only known documentation directories; never walk arbitrary data trees.
-    for directory in (root / 'docs', root / 'docs/auth-sdk'):
+    for directory in (root / 'docs', root / 'docs/auth-sdk', root / 'docs/features'):
         if directory.is_symlink():
             raise ValueError('Documentation directory cannot be a symlink')
         if directory.is_dir():

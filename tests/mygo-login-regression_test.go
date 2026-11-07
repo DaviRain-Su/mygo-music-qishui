@@ -19,17 +19,32 @@ func TestQishuiLoginRegression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	manifest, err := os.ReadFile(filepath.Join(filepath.Dir(os.Getenv("QISHUI_PLUGIN_SOURCE")), "plugin.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, scenario := range []string{"success", "api-error-7", "invalid-account", "verification-prompt"} {
 		t.Run(scenario, func(t *testing.T) {
-			dir, data := write(t, `{"id":"qishui","main":"index.js","permissions":{"process":["node","/opt/homebrew/bin/node","/usr/local/bin/node"]}}`, string(source))
+			dir, data := write(t, string(manifest), string(source))
 			if err := os.MkdirAll(filepath.Join(dir, "helper"), 0700); err != nil {
 				t.Fatal(err)
 			}
 			child := fmt.Sprintf(`
 const rl = require('node:readline').createInterface({input:process.stdin});
 const scenario = %q;
+const {Features}=require(%q);
+const service=new Features({account:async()=>({id:'user-42'}),api:async(path,q,b)=>{
+ const track={id:'t1',name:'SDK track',duration:123000};
+ if(path.endsWith('/search/track'))return {result_groups:[{id:'tracks',data:[{entity:{track}}],has_more:false}]};
+ if(path.endsWith('/track_v2'))return {lyric:{content:'[00:01.00]Test'}};
+ if(path.endsWith('/comments'))return {comments:[{id:'c1',content:'Test',time_created:2}],count:'1',has_more:false};
+ if(path.endsWith('/discover'))return {blocks:[]};
+ if(path.endsWith('/me/playlist'))return {playlist:{id:'created'}};
+ if(path.endsWith('/append'))return {};
+ throw new Error('Unexpected fixture route');
+}});
 const emit = value => process.stdout.write(JSON.stringify(value)+'\n');
-rl.on('line',line=>{
+rl.on('line',async line=>{
  const r=JSON.parse(line); const answer=result=>emit({id:r.id,ok:true,result});
  if(r.op==='hello')return answer({protocol:1,version:'0.2.0'});
  if(r.op==='signIn'){
@@ -38,22 +53,40 @@ rl.on('line',line=>{
   if(scenario==='verification-prompt')emit({id:r.id,event:'prompt',stage:'verification',text:'Complete the official verification'});
   return answer({cookie:'sessionid=runtime-session',account:scenario==='invalid-account'?{}:{id:'user-42',name:'Test listener'}});
  }
- if(r.op==='request')return answer({data:{tracks:[{id:'t1',name:'SDK track'}]}});
+ if(r.op==='catalog')return answer(await service.dispatch(r.params));
  if(r.op==='stream'){
   const dataDir=process.argv[process.argv.indexOf('--data-dir')+1];
-  const url=require('node:url').pathToFileURL(dataDir+'/audio-cache/run-test/0123456789abcdef0123456789abcdef.mp3').href;
-  return answer({url,type:'mp3',quality:'standard',bitRate:128000,size:4096});
+  const type=r.params.quality==='lossless'?'flac':'mp3';
+  const url=require('node:url').pathToFileURL(dataDir+'/audio-cache/run-test/0123456789abcdef0123456789abcdef.'+type).href;
+  return answer({url,type,quality:r.params.quality,size:4096});
  }
  return answer(null);
 });
 rl.on('close',()=>process.exit(0));
-`, scenario)
+`, scenario, filepath.Join(filepath.Dir(os.Getenv("QISHUI_PLUGIN_SOURCE")), "helper", "features.cjs"))
 			if err := os.WriteFile(filepath.Join(dir, "helper", "launch.cjs"), []byte(child), 0600); err != nil {
 				t.Fatal(err)
 			}
 			p, err := Load(dir, data)
 			if err != nil {
 				t.Fatal(err)
+			}
+
+			if p.Info().Version != "0.4.0" {
+				t.Fatal("wrong plugin version")
+			}
+			routes := map[string]bool{}
+			for _, nav := range p.Info().Navigation {
+				if nav.Page != "" {
+					routes[nav.Page] = true
+				} else {
+					routes[nav.Builtin] = true
+				}
+			}
+			for _, route := range []string{"home", "liked", "discover", "charts", "history", "stations", "savedAlbums"} {
+				if !routes[route] {
+					t.Fatalf("missing navigation %s", route)
+				}
 			}
 			t.Cleanup(p.Close)
 			p.Grant(true)
@@ -93,6 +126,39 @@ rl.on('close',()=>process.exit(0));
 					found, err := p.Search("test", music.SearchTracks, 0)
 					if err != nil || len(found.Tracks) != 1 || found.Tracks[0].ID != "t1" {
 						t.Fatalf("SDK catalog: %+v, %v", found, err)
+					}
+
+					for _, name := range []string{"home", "browse", "search", "playlists", "playlist", "liked", "isLiked", "savedAlbums", "recent", "stations", "stationNext", "lyrics", "comments", "postComment", "like", "savePlaylist", "saveAlbum", "createPlaylist", "addToPlaylist", "played"} {
+						if !p.Can(name) {
+							t.Fatalf("missing export %s", name)
+						}
+					}
+					for _, name := range []string{"album", "artist", "suggest", "followArtist", "deletePlaylist", "renamePlaylist", "removeFromPlaylist", "movePlaylistTrack", "likeComment", "shows", "remotePlay"} {
+						if p.Can(name) {
+							t.Fatalf("blocked export %s", name)
+						}
+					}
+					lyric, err := p.Lyrics("t1")
+					if err != nil || lyric.LRC != "[00:01.00]Test" {
+						t.Fatalf("lyrics: %+v %v", lyric, err)
+					}
+					comments, err := p.Comments("t1", 0)
+					if err != nil || comments.Comments[0].Time != 2000 {
+						t.Fatalf("comments: %+v %v", comments, err)
+					}
+					created, err := p.CreatePlaylist("New")
+					if err != nil || !created.Mine || created.ID != "created" {
+						t.Fatalf("create: %+v %v", created, err)
+					}
+					if err := p.AddToPlaylist("created", []string{"t1", "t2"}); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := p.Browse("discover"); err != nil {
+						t.Fatal(err)
+					}
+					flac, err := p.Stream("t1", "lossless")
+					if err != nil || flac.Type != "flac" || flac.Quality != "lossless" || !strings.HasSuffix(flac.URL, ".flac") {
+						t.Fatalf("FLAC: %+v %v", flac, err)
 					}
 					stream, err := p.Stream("t1", "standard")
 					if err != nil || stream == nil || stream.Type != "mp3" || stream.Size != 4096 {

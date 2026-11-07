@@ -1,17 +1,22 @@
 'use strict';
 const MAX_LINE_BYTES = 65536;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-const OPS = new Set(['hello', 'signIn', 'account', 'signOut', 'request', 'stream', 'probe', 'shutdown']);
+const OPS = new Set(['hello', 'signIn', 'account', 'signOut', 'request', 'catalog', 'stream', 'probe', 'shutdown']);
 const MESSAGES = Object.freeze({
+  input: '汽水功能参数无效。',
+  limit: '汽水数据超过处理上限。',
+  pagination: '汽水分页数据不完整或超过读取上限。',
+  'mutation-unknown': '操作可能已完成，结果未知。请先核对当前状态，不要自动重试。',
+  cache: '操作已完成，但缓存未能刷新。请核对当前状态，不要重复提交。',
   setup: '汽水 SDK 运行时未就绪。请在插件目录运行 node helper/install.cjs；依赖将安装到独立数据目录。不要在插件目录执行 npm install/ci。',
   protocol: '汽水辅助程序协议数据无效。',
   busy: '已有汽水登录正在进行，请先完成或取消当前登录。',
   network: '无法连接汽水认证服务，请检查网络。',
-  timeout: '汽水认证操作超时。',
+  timeout: '汽水操作超时。',
   cancelled: '汽水登录或安全验证已取消。',
   sdk: '官方安全 SDK 未就绪或没有生成安全参数，已停止登录。',
   integrity: '官方 SDK 文件摘要校验失败，未执行该文件。',
-  response: '汽水返回了无法识别的认证响应。',
+  response: '汽水返回了无法识别的响应。',
   session: '汽水尚未向本插件下发有效登录会话。',
   account: '取得会话后仍无法验证汽水账号，本次未判定为登录成功。',
   api: '汽水接口拒绝请求。',
@@ -20,12 +25,13 @@ const MESSAGES = Object.freeze({
   audio: '这首歌的音频格式或授权数据暂不支持，未尝试绕过播放限制。',
   entitlement: '当前账号没有这首歌所返回音质的可验证播放权限。',
   preview: '服务端只提供了试听片段，当前插件不会将其作为完整版播放。',
-  ffmpeg: '音频转换失败。请确认已安装支持 AAC 和 libmp3lame 的 ffmpeg。',
+  ffmpeg: '音频处理失败。请确认 ffmpeg 支持 AAC、libmp3lame 和 FLAC 解码。',
 });
 function fault(code, details = {}) {
   const error = new Error(MESSAGES[code] || MESSAGES.unavailable);
   error.code = code;
   for (const key of ['apiCode', 'httpStatus']) if (Number.isInteger(details[key])) error[key] = details[key];
+  if (Number.isSafeInteger(details.confirmed) && details.confirmed >= 0 && details.confirmed <= 100) error.confirmed = details.confirmed;
   return error;
 }
 function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -54,6 +60,9 @@ function publicError(error) {
   if (Number.isInteger(error?.apiCode)) { out.apiCode = error.apiCode; out.message += `（错误码 ${error.apiCode}）`; }
   if (Number.isInteger(error?.httpStatus)) { out.httpStatus = error.httpStatus; out.message += `（HTTP ${error.httpStatus}）`; }
   if (['metadata', 'entitlement', 'download', 'decrypt', 'encode', 'verify'].includes(error?.stage)) out.stage = error.stage;
+  if (['mutation-unknown', 'api', 'cache'].includes(code) && Number.isSafeInteger(error?.confirmed) && error.confirmed >= 0 && error.confirmed <= 100) {
+    out.confirmed = error.confirmed; out.message += `（已确认 ${error.confirmed} 项）`;
+  }
   return out;
 }
 function encodeResponse(value) {
