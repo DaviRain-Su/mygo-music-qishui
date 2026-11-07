@@ -70,7 +70,7 @@ class Catalog {
   if(typeof api!=='function'||typeof account!=='function'||typeof now!=='function') throw fault('protocol');
   this.api=api;this.account=account;this.now=now;this.generation=0;this.queue=Promise.resolve();this.clear();
  }
- _reset() { this.accountId=null;this.searches=new Map();this.feeds=new Map();this.modes=null;this.likes=null; }
+ _reset() { this.accountId=null;this.searches=new Map();this.feeds=new Map();this.modes=null;this.likes=null;this.stationCovers=new Map(); }
  clear() { this.generation++;this._reset(); }
  invalidate(scope) { if(scope!==undefined && (typeof scope!=='string'||scope.length>128)) throw fault('protocol');this.clear(); }
  async _run(fn) {
@@ -149,7 +149,31 @@ class Catalog {
   for(const mode of modes){const v=mode.entity?.feed_scene_mode?.scene_mode_id;if(Number.isSafeInteger(v)&&v>0)result.push({id:'scene:'+v,name:text(mode.text),imageUrl:image(mode.url_info)});}
   this.modes=new Set(result.map(x=>x.id));return unique(result);
  }
- stations() {return this._run(ctx=>this._stations(ctx));}
+ // One-shot cover probe: does not advance the playback feed session.
+ async _peekCover(ctx,value) {
+  const body={is_first_request:true,played_media:[],is_did_first_request:false,feed_counts:{mix_session_count:1}};
+  if(value==='familiar'||value==='fresh')body.feed_preference={preference_mode:value};
+  else if(value.startsWith('scene:'))body.feed_preference={scene_mode_id:Number(value.slice(6))};
+  const root=await this._api(ctx,'feed/song-tab',{},body);
+  const raw=list(Object.hasOwn(root,'media')?root.media:root.items);
+  for(const row of raw){
+   try{const cover=mapTrack(row).album?.imageUrl;if(cover)return cover;}catch{/* skip malformed rows */}
+  }
+  return undefined;
+ }
+ async _enrichStationCovers(ctx,stations) {
+  const need=stations.filter(s=>!this.stationCovers.has(s.id));
+  for(let i=0;i<need.length;i+=6){
+   this._check(ctx);
+   const batch=need.slice(i,i+6);
+   const found=await Promise.all(batch.map(async s=>{
+    try{return [s.id,await this._peekCover(ctx,s.id)];}catch{return [s.id,undefined];}
+   }));
+   for(const [id,cover] of found)if(cover)this.stationCovers.set(id,cover);
+  }
+  return stations.map(s=>{const cover=this.stationCovers.get(s.id);return cover?{...s,imageUrl:cover}:s;});
+ }
+ stations() {return this._run(async ctx=>this._enrichStationCovers(ctx,await this._stations(ctx)));}
  async _feed(ctx,value) {
   if(!['default','familiar','fresh'].includes(value)) {if(!/^scene:[1-9]\d{0,14}$/.test(value))throw fault('protocol');if(!this.modes)await this._stations(ctx);if(!this.modes.has(value))throw fault('protocol');}
   let s=this.feeds.get(value);if(!s){s={pages:0,played:[],seen:new Set(),done:false};this.feeds.set(value,s);while(this.feeds.size>16)this.feeds.delete(this.feeds.keys().next().value);}
@@ -178,11 +202,37 @@ class Catalog {
    }if(Object.keys(KINDS).some(k=>section[k].length))sections.push(section);
   }return {title:charts?'榜单':'发现',sections};
  }
+ async _home(ctx) {
+  // MyGo renders the first tracks section as the daily feature card; later sections
+  // fill the page. Feed-only homes look empty, so compose discover/stations too.
+  const feed=await this._feed(ctx,'default');
+  const sections=[{title:'每日推荐',tracks:feed.tracks,...(feed.more?{morePage:'feed:default'}:{})}];
+  try{
+   const stations=await this._enrichStationCovers(ctx,await this._stations(ctx));
+   const featured=stations.filter(s=>s.imageUrl).slice(0,12);
+   if(featured.length)sections.push({title:'情景电台',stations:featured});
+  }catch(error){if(error?.code==='account'||error?.code==='pagination')throw error;}
+  try{
+   const discover=await this._discover(ctx,false);
+   const playlists=unique(discover.sections.flatMap(s=>s.playlists||[])).slice(0,20);
+   if(playlists.length)sections.push({title:'精选歌单',playlists,morePage:'discover'});
+   const charts=unique(discover.sections.flatMap(s=>s.tracks||[])).slice(0,20);
+   if(charts.length)sections.push({title:'热歌榜',tracks:charts,morePage:'charts'});
+   const imageUrl=playlists[0]?.imageUrl||feed.tracks[0]?.album?.imageUrl;
+   sections.push({title:'探索',links:[
+    {title:'发现',subtitle:'更多精选内容',page:'discover',...(imageUrl?{imageUrl}:{})},
+    {title:'榜单',subtitle:'热门歌曲',page:'charts'},
+    {title:'最近播放',subtitle:'继续听',page:'history'},
+   ]});
+  }catch(error){if(error?.code==='account'||error?.code==='pagination')throw error;}
+  return {title:'首页',sections};
+ }
  async _browse(ctx,page) {
   if(page==='discover'||page==='charts')return this._discover(ctx,page==='charts');
   if(page==='history')return {title:'最近播放',sections:[{tracks:await this._recent(ctx)}]};
   if(page==='library')return {title:'我的歌单',sections:[{playlists:await this._playlists(ctx)}]};
-  if(page==='home'||page==='feed:default'){const p=await this._feed(ctx,'default');return {title:'推荐',sections:[{tracks:p.tracks,...(p.more?{morePage:'feed:default'}:{})}]};}
+  if(page==='home')return this._home(ctx);
+  if(page==='feed:default'){const p=await this._feed(ctx,'default');return {title:'推荐',sections:[{tracks:p.tracks,...(p.more?{morePage:'feed:default'}:{})}]};}
   throw fault('protocol');
  }
  home() {return this._run(ctx=>this._browse(ctx,'home'));}

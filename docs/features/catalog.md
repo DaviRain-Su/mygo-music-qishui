@@ -13,7 +13,7 @@ verified account with a string `id`; `now` defaults to `Date.now`.
 
 | Method | Result |
 | --- | --- |
-| `home()` | MyGo Browse with recommendation tracks and `morePage: 'feed:default'` |
+| `home()` | Rich MyGo Browse: feature tracks first, then stations/playlists/charts/links |
 | `browse({page})` | Browse; routes `home`, `discover`, `charts`, `history`, `library`, `feed:default` |
 | `search({query,kind='tracks',offset=0})` | SearchResult for tracks/albums/artists/playlists; at most 20 items |
 | `playlists()` | Playlist array, owned entries preferred over saved duplicates |
@@ -22,7 +22,7 @@ verified account with a string `id`; `now` defaults to `Date.now`.
 | `isLiked({ids})` | ID-to-boolean object, only after obtaining the complete liked set |
 | `savedAlbums({offset=0})` | AlbumList of up to 100 explicitly classified album collections |
 | `recent()` | Complete bounded history Track array or error |
-| `stations()` | Station array: default/familiar/fresh plus server-listed scenes |
+| `stations()` | Station array: default/familiar/fresh plus scenes; prefer first-track album art over mode logos |
 | `stationNext({id})` | Track array; scene IDs must occur in the server mode list |
 | `invalidate(scope?)` / `clear()` | Synchronous cache/session reset; conservative invalidation clears everything |
 

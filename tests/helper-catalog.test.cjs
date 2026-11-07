@@ -83,10 +83,51 @@ test('discovery posts an empty body and charts filter mixed playlist/ranked_trac
  assert.equal(calls.length,2);
 });
 test('feed sessions isolate modes and continue home, bounded repeated pages',async()=>{
- const bodies=[];const c=make(async(p,q,b)=>{if(p.endsWith('/mode'))return {feed_mode_block:[{feed_mode:[{text:'Scene',entity:{feed_scene_mode:{scene_mode_id:4}}}]}],feed_mode_bar:{feed_mode:[]}};bodies.push(b);return {media:[media('t')]};});
- assert.ok((await c.stations()).some(x=>x.id==='scene:4')); const home=await c.home();assert.equal(home.sections[0].morePage,'feed:default');
- await c.browse({page:'feed:default'});await c.stationNext({id:'fresh'});assert.equal(bodies[0].is_first_request,true);assert.equal(bodies[1].is_first_request,false);assert.equal(bodies.at(-1).is_first_request,true);assert.deepEqual(bodies.at(-1).feed_preference,{preference_mode:'fresh'});assert.equal(bodies.length,4);
+ const bodies=[];const c=make(async(p,q,b)=>{
+  if(p.endsWith('/mode'))return {feed_mode_block:[{feed_mode:[{text:'Scene',entity:{feed_scene_mode:{scene_mode_id:4}}}]}],feed_mode_bar:{feed_mode:[]}};
+  if(p.endsWith('/discover'))return {blocks:[]};
+  bodies.push(b);return {media:[media('t')],has_more:true};
+ });
+ const stations=await c.stations();
+ assert.ok(stations.some(x=>x.id==='scene:4'));
+ assert.equal(stations.find(x=>x.id==='default').imageUrl,'https://img.test/a~c5_400x400.jpg');
+ const home=await c.home();assert.equal(home.sections[0].morePage,'feed:default');
+ await c.browse({page:'feed:default'});await c.stationNext({id:'fresh'});
+ const defaults=bodies.filter(b=>!b.feed_preference);
+ assert.ok(defaults.some(b=>b.is_first_request===true));
+ assert.ok(defaults.some(b=>b.is_first_request===false),'playback feed continues with a non-first request');
+ const fresh=bodies.filter(b=>b.feed_preference?.preference_mode==='fresh');
+ assert.ok(fresh.some(b=>b.is_first_request===true));
  await assert.rejects(c.stationNext({id:'scene:999'}),{code:'protocol'});
+});
+test('home composes feature tracks with stations, playlists, charts and links',async()=>{
+ const c=make(async(path,q,b)=>{
+  if(path.endsWith('/mode'))return {feed_mode_block:[{feed_mode:[
+   {text:'Chill',url_info:{urls:['https://img.test/'],uri:'logo.png',template_prefix:'tplv-x'},entity:{feed_scene_mode:{scene_mode_id:3}}},
+   {text:'Drive',url_info:{urls:['https://img.test/'],uri:'logo2.png',template_prefix:'tplv-x'},entity:{feed_scene_mode:{scene_mode_id:7}}},
+  ]}],feed_mode_bar:{feed_mode:[]}};
+  if(path.endsWith('/discover'))return {blocks:[
+   {type:'discover_feed_playlist',inner_block:[{title:'Pl',resources:[{entity:{playlist:{id:'p1',title:'P1',url_cover:{urls:['https://img.test/'],uri:'pl'}}}}]}]},
+   {type:'discover_top_song_list',inner_block:[{title:'Chart',resources:[{entity:{ranked_track:{track:track('hit')}}}]}]},
+  ]};
+  if(path.endsWith('/song-tab')){
+   const id=b?.feed_preference?.scene_mode_id===7?'drive':'rec';
+   return {media:[media(id)],has_more:false};
+  }
+  throw new Error('unexpected '+path);
+ });
+ const home=await c.home();
+ assert.equal(home.title,'首页');
+ assert.equal(home.sections[0].title,'每日推荐');
+ assert.equal(home.sections[0].tracks[0].id,'rec');
+ assert.equal(home.sections[0].morePage,undefined);
+ const radio=home.sections.find(s=>s.title==='情景电台');
+ assert.ok(radio.stations.length>=2);
+ assert.equal(radio.stations.find(s=>s.id==='scene:7').imageUrl,'https://img.test/a~c5_400x400.jpg');
+ assert.notEqual(radio.stations.find(s=>s.id==='scene:3').imageUrl.includes('logo.png'),true);
+ assert.equal(home.sections.find(s=>s.title==='精选歌单').playlists[0].id,'p1');
+ assert.equal(home.sections.find(s=>s.title==='热歌榜').tracks[0].id,'hit');
+ assert.deepEqual(home.sections.find(s=>s.title==='探索').links.map(l=>l.page),['discover','charts','history']);
 });
 test('existing PC feed wrapper and items contract preserves real track ID and cover URI',async()=>{
  const wrapped={id:'wrapper',type:'track',entity:{track_wrapper:{track:{base_info:{id:'real',name:'Wrapped',duration:123000},display_info:{cover_url:{urls:['https://images.test/'],uri:'cover-key'}},related_info:{artist_links:[{id:'r',name:'R'}],album_link:{id:'a',name:'A'}}}}}};
@@ -159,7 +200,7 @@ for(const reset of ['clear','invalidate'])test(`${reset} cancels account-pending
  const rejected=Promise.all([assert.rejects(pending,{code:'account'}),assert.rejects(queued,{code:'account'})]);
  c[reset]();release({id:'me'});await rejected;
  assert.equal(accounts,1);assert.equal(calls,0);assert.equal(c.accountId,null);assert.equal(c.feeds.size,0);
- assert.equal((await c.home()).sections[0].tracks[0].id,'new');assert.equal(calls,1);
+ assert.equal((await c.home()).sections[0].tracks[0].id,'new');assert.ok(calls>=1);
 });
 for(const reset of ['clear','invalidate'])test(`${reset} cancels reads queued before execution starts`,async()=>{
  let calls=0;const c=new Catalog({account:async()=>{calls++;return {id:'me'};},api:async()=>({media:[]})});
@@ -173,7 +214,7 @@ test('empty feed with explicit continuation errors without poisoning subsequent 
 test('station empty continuation is bounded; explicit terminal empty feed ends normally',async()=>{
  let calls=0;const c=make(async()=>{calls++;return {items:[],has_more:true};});
  await assert.rejects(c.stationNext({id:'fresh'}),{code:'pagination'});assert.equal(calls,1);
- const d=make(async()=>({items:[],has_more:false}));assert.deepEqual((await d.home()).sections,[{tracks:[]}]);
+ const d=make(async()=>({items:[],has_more:false}));assert.deepEqual((await d.home()).sections,[{title:'每日推荐',tracks:[]}]);
 });
 
 // Synthetic regression fixtures from catalog-002's sanitized structural evidence.
