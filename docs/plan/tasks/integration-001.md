@@ -1,7 +1,7 @@
 ---
 id: integration-001
 scope: plugin-helper-feature-integration
-status: in-progress
+status: done
 depends-on: [catalog-001, community-001, quality-001]
 ---
 
