@@ -13,7 +13,7 @@ lossless 不再回退 AAC→MP3。只选择明确 codec_type=flac 且当前 qual
 
 仅非分片、单音轨、单 sample description、version-0 audio entry，FLAC STREAMINFO 必须为首块且34字节，metadata 链必须完整。MP4 保留 dfLa 解码信息与 sample 边界。CENC 仅 cenc AES-CTR、8/16字节逐样本 IV、无 subsample flags；不支持 fragmented、ALAC、Hi-Res/空间档位、其他加密模式、未知权益映射。不会绕过试听检查。原始 FLAC 检查 metadata 结构，实际帧有效性由 ffmpeg 严格解码检查；同时对照原始样本数检测完整帧边界截断。STREAMINFO 样本总数为0（未知）明确拒绝，未自行实现完整 FLAC 解码器。
 
-输入最大64MiB、200000样本、box/metadata数量有界。严格解码使用 s32le 流式计数并丢弃 PCM，不写 PCM 文件；预期解码量最多512MiB，超过预期立即终止进程。验证与下载/转码共用25秒 abort，验证进程收到 abort 后 SIGKILL。输出 ffmpeg -fs 限制64MiB，达到上限拒绝以避免返回截断文件。保留25秒 abort、最多2个进行中任务、3个缓存、5分钟TTL、0600/0700权限、密钥内存归零及失败/close清理。注入的 api/fetcher/encoder 必须遵守 AbortSignal；不能强制终止忽略 signal 的自定义 Promise。
+输入最大64MiB、200000样本、box/metadata数量有界。严格解码使用 s32le 流式计数并丢弃 PCM，不写 PCM 文件；预期解码量最多512MiB，超过预期立即终止进程。验证与下载/转码共用25秒 abort，验证进程收到 abort 后 SIGKILL。输出 ffmpeg -fs 限制64MiB，达到上限拒绝以避免返回截断文件。保留25秒 abort、最多2个进行中任务、8个缓存、30分钟TTL、0600/0700权限、密钥内存归零及失败/close清理。`track_v2` 与 `/me` 并行请求以缩短冷准备；仍不把缓存写到跨进程持久目录。注入的 api/fetcher/encoder 必须遵守 AbortSignal；不能强制终止忽略 signal 的自定义 Promise。
 
 ## 离线验证
 

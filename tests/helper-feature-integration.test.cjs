@@ -32,11 +32,11 @@ function transport(log) {
  };
 }
 async function bridge(t, api) {
- const service = new Features({api,account:async()=>({id:'u1',name:'User'})});
+ const service = new Features({api,account:async()=>({id:'u1',name:'User',imageUrl:'https://img.test/me.jpg'})});
  const storage = new Map([['cookie','sessionid=synthetic'],['account',{id:'u1',name:'User'}],['authBackend','sdk-v1']]);
  const requests=[],timers=[],readers=[],lines=[];let closed=false;
  const proc={write(line){const r=parseRequest(line);requests.push(r);Promise.resolve().then(async()=>{
-  try {const result=r.op==='hello'?{protocol:1,version:'0.4.3'}:r.op==='catalog'?await service.dispatch(r.params):null;emit({id:r.id,ok:true,result});}
+  try {const result=r.op==='hello'?{protocol:1,version:'0.4.4'}:r.op==='catalog'?await service.dispatch(r.params):null;emit({id:r.id,ok:true,result});}
   catch(e){emit({id:r.id,ok:false,error:publicError(e)});}
  });},readLine(){return lines.length?Promise.resolve(lines.shift()):closed?Promise.resolve(null):new Promise(r=>readers.push(r));},kill(){closed=true;for(const r of readers.splice(0))r(null);}};
  function emit(v){const line=encodeResponse(v);readers.length?readers.shift()(line):lines.push(line);}
@@ -54,7 +54,8 @@ test('all feature exports traverse JSONL and real modules with only API transpor
  assert.equal((await p.savedAlbums({offset:0})).albums[0].id,'a1');assert.equal((await p.recent())[0].id,'t1');
  assert.equal((await p.stations())[0].id,'default');assert.equal((await p.stationNext({id:'fresh'}))[0].id,'t1');
  assert.equal((await p.lyrics({id:'t1'})).lrc,'[00:01.00]Song');assert.equal((await p.comments({trackId:'t1',offset:0})).comments[0].time,2000);
- assert.equal((await p.postComment({trackId:'t1',text:'Test'})).id,'c2');
+ const posted=await p.postComment({trackId:'t1',text:'Test'});
+ assert.equal(posted.id,'c2');assert.equal(posted.text,'Test');assert.equal(posted.author,'User');assert.equal(posted.avatarUrl,'https://img.test/me.jpg');
  for(const name of ['like','savePlaylist','saveAlbum'])await p[name]({id:'t1',on:true});
  assert.equal((await p.createPlaylist({name:'New'})).mine,true);
  assert.equal((await p.addToPlaylist({id:'p1',trackIds:['t1','t2']})).confirmed,2);await p.played({id:'t1'});

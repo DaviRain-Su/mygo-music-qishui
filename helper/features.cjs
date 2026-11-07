@@ -14,7 +14,16 @@ const METHODS = new Map([
  ['isLiked',(s,a)=>s.catalog.isLiked(a)], ['savedAlbums',(s,a)=>s.catalog.savedAlbums(a)],
  ['recent',(s,a)=>s.catalog.recent(a)], ['stations',(s,a)=>s.catalog.stations(a)],
  ['stationNext',(s,a)=>s.catalog.stationNext(a)], ['lyrics',(s,a)=>s.community.lyrics(a)],
- ['comments',(s,a)=>s.community.comments(a)], ['postComment',(s,a)=>s.community.postComment(a)],
+ ['comments',(s,a)=>s.community.comments(a)],
+ ['postComment',async(s,a)=>{
+   const comment=await s.community.postComment(a);
+   const account=featureContext.getStore()?.account;
+   if(comment&&typeof comment==='object'){
+    if(!comment.author&&typeof account?.name==='string')comment.author=account.name;
+    if(!comment.avatarUrl&&typeof account?.imageUrl==='string'&&/^https:\/\//.test(account.imageUrl))comment.avatarUrl=account.imageUrl;
+   }
+   return comment;
+ }],
  ['like',(s,a)=>s.actions.like(a)], ['savePlaylist',(s,a)=>s.actions.savePlaylist(a)],
  ['saveAlbum',(s,a)=>s.actions.saveAlbum(a)], ['createPlaylist',async(s,a)=>({...await s.actions.createPlaylist(a),mine:true})],
  ['addToPlaylist',(s,a)=>s.actions.addToPlaylist(a)], ['played',(s,a)=>s.actions.played(a)],

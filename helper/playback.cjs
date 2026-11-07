@@ -91,6 +91,8 @@ async function verifyFlac(command, file, expectedBytes, signal) {
   if (signal.aborted) throw fault('timeout');
   if (!valid) throw fault('ffmpeg');
 }
+const CACHE_LIMIT = 8;
+const CACHE_TTL_MS = 30 * 60 * 1000;
 class Playback {
   constructor({ dataDir, api, fetcher = fetch, encoder = transcode }) {
     this.dataDir = dataDir; this.api = api; this.fetcher = fetcher; this.encoder = encoder;
@@ -115,7 +117,7 @@ class Playback {
     if (!['standard', 'high', 'lossless'].includes(quality)) throw fault('protocol');
     const bitRate = quality === 'standard' ? 128 : 192, key = `${id}:${quality}:${quality === 'lossless' ? 'flac' : 'mp3'}`;
     const cached = this.cache.get(key);
-    if (cached && Date.now() - cached.at < 300000) return cached.result;
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.result;
     if (this.pending.has(key)) return this.pending.get(key);
     if (this.pending.size >= 2) throw fault('busy');
     const task = this.build(id, quality, bitRate, key).finally(() => this.pending.delete(key));
@@ -128,8 +130,10 @@ class Playback {
     try {
       const root = await this.init();
       const check = () => { if (controller.signal.aborted || this.closed) throw fault('timeout'); };
-      const payload = await this.api('/luna/pc/track_v2', {}, { track_id: id, media_type: 'track', queue_type: 'favorite_track_playlist', scene_name: 'library' }, controller.signal); check();
-      const me = await this.api('/luna/pc/me', {}, undefined, controller.signal); check();
+      const [payload, me] = await Promise.all([
+        this.api('/luna/pc/track_v2', {}, { track_id: id, media_type: 'track', queue_type: 'favorite_track_playlist', scene_name: 'library' }, controller.signal),
+        this.api('/luna/pc/me', {}, undefined, controller.signal),
+      ]); check();
       const profile = me.my_info || me.data?.my_info || me.data?.user || {};
       stage = 'entitlement'; selected = selectAudio(payload, { quality, isVip: profile.is_vip === true });
       stage = 'download'; const encrypted = await downloadAudio(selected.url, controller.signal, this.fetcher); check();
@@ -151,7 +155,7 @@ class Playback {
       const previous = this.cache.get(cacheKey);
       if (previous) await fs.rm(previous.file, { force: true }).catch(() => {});
       this.cache.delete(cacheKey); this.cache.set(cacheKey, { result, file: output, at: Date.now() });
-      while (this.cache.size > 3) {
+      while (this.cache.size > CACHE_LIMIT) {
         const first = this.cache.keys().next().value, old = this.cache.get(first); this.cache.delete(first);
         await fs.rm(old.file, { force: true }).catch(() => {});
       }

@@ -149,3 +149,19 @@ test('FLAC verification rejects unknown sample counts and excessive decoded size
     await assert.rejects(fs.access(output));
   }
 });
+
+test('keeps eight prepared tracks and drops the oldest file', async t => {
+  const root = await sandbox(t); let concurrent = 0;
+  const playback = new Playback({
+    dataDir: root,
+    api: async (pathname) => pathname.endsWith('/me') ? { my_info: { is_vip: false } } : fixture(),
+    fetcher: async () => new Response(Buffer.from('plain-audio-fixture')),
+    encoder: async (_input, output) => { concurrent++; assert.ok(concurrent <= 2); await fs.writeFile(output, Buffer.concat([Buffer.from('ID3'), Buffer.alloc(2048)])); concurrent--; },
+  });
+  t.after(() => playback.close());
+  const urls = [];
+  for (let i = 0; i < 9; i++) urls.push((await playback.prepare({ id: 'track-' + i, quality: 'standard' })).url);
+  assert.equal(playback.cache.size, 8);
+  await assert.rejects(fs.access(fileURLToPath(urls[0])));
+  assert.equal((await fs.stat(fileURLToPath(urls[8]))).size > 1024, true);
+});
