@@ -59,14 +59,20 @@ sections, including playlist-only sections.
   returned DTOs. Cursors are opaque strings. Unknown offsets sequentially read
   at most eight upstream pages per call; unresolved offsets raise `pagination`.
   At most 16 search sessions and 5,000 unique items per session are retained.
-- `has_more: false` takes precedence over stale cursors and totals. Otherwise,
-  missing, repeated or cyclic next cursors, empty pages claiming more, and search
-  pages with no new IDs raise `pagination`. Within-page duplicates are deduplicated.
-- GET user-playlist/mixed responses with total_num but insufficient rows require
-  a real next cursor. No offset-derived cursor is manufactured. A valid explicit
-  list with neither total nor pagination metadata is accepted as a legacy
-  single-response snapshot, including an explicit empty list. This compatibility
-  rule cannot independently prove that an undocumented server omitted data.
+- Cursor-based reads continue only when `has_more === true`; false or omission
+  ends the list, regardless of residual cursors or `total_num`. Totals do not
+  establish completeness or imply another page. Nonboolean flags fail.
+  Explicit continuation requires a nonempty list and a bounded, nonrepeated,
+  noncyclic next cursor; search also requires new IDs. Within-page duplicates
+  are deduplicated. Existing total type validation remains in place.
+- An explicit valid list remains accepted without success metadata. Omitted
+  terminal playlist media requires valid playlist metadata whose ID matches the
+  requested ID (`playlist`, or the existing `playlist_info` fallback). Other
+  cursor lists (user playlists, mixed collections, history, and matched search
+  group data) require `status_info` to be an object with numeric `status_code: 0`.
+  Search still requires the matching group. Empty/unknown status objects are
+  insufficient; arbitrary `{}` is never accepted as an empty response. Present
+  malformed list fields and omitted lists with explicit more always fail.
 - Discovery visits at most 5,000 inner blocks/resources in aggregate.
 - Complete reads stop at 50 pages or 5,000 raw rows. At the limit, explicit more
   is an error. Every operation has a 25-second API budget, including awaited
@@ -143,3 +149,34 @@ No staging/commit was attempted during this follow-up, and no shared Git metadat
 was modified. Independent re-review of the fixes, public pagination-error serialization,
 host/dispatcher wiring, lifecycle invalidation, live schema validation (including
 scene modes), and end-to-end host/installer tests remain integration obligations.
+
+## catalog-002 handoff
+
+Implemented the current protobuf terminal-omission contract using only the three
+allowed files. Read the current feature contract and the supplied sanitized
+`/tmp/qishui-catalog-read-acceptance.jsonl`,
+`/tmp/qishui-library-shape-diagnosis.jsonl`, and
+`/tmp/qishui-liked-debug-safe.jsonl`. Synthetic regressions reproduce residual
+liked cursors, history's 417 returned rows versus total 500, and omitted terminal
+playlist media. No real account files, credentials, network, or remote mutations
+were accessed.
+
+TDD evidence: baseline **37/37 passed**; eight added tests yielded **40 passed,
+5 failed** before implementation. The residual-liked regression was additionally
+isolated and confirmed an unwanted second detail request before the fix. Two old
+incompleteness assertions now explicitly set `has_more: true`, as totals alone
+cannot require continuation under the new contract. Final focused command:
+`node --test tests/helper-catalog.test.cjs` — **45/45 passed**, no skips.
+Cancellation, page/row/time bounds, preferred-list validation, cyclic cursors,
+input bounds, and feed/discovery behavior remain covered and unchanged.
+
+The status summaries reveal only the presence of `status_info`, not its internal
+fields. Empty-list acceptance outside playlist metadata is deliberately restricted
+to explicit numeric zero `status_code`; acceptance of protobuf-omitted status
+codes requires further safe structural evidence. Feed and discovery list parsing
+are unchanged by this cursor-pagination repair.
+
+Ready for orchestrator commit; no staging, commit, or Git metadata bypass was
+attempted. Independent re-review, public pagination-error serialization, host
+wiring/lifecycle verification, and authorized live/end-to-end validation remain
+orchestrator/integration obligations. No integration or other module was edited.

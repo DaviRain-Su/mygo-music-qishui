@@ -61,24 +61,24 @@ Playback helper (independent): true source FLAC → lossless FLAC; AAC → MP3
 
 - 必须验证字符串ID、offset非负安全整数、输入上限；禁止任意URL或请求路径输入。
 - DTO 严格采用 MyGo music.go 字段，duration/评论/歌词均毫秒，cover进入album.imageUrl，不使用虚构ID。
-- 搜索每种类型使用独立路径和独立 query/kind 的 offset→opaque cursor 缓存，不能把offset直接当游标。group.has_more=false 优先；缺游标、重复/循环游标、空页带更多、同页重复项需明确处理，不能无限重复第一页。
+- 搜索每种类型使用独立路径和独立 query/kind 的 offset→opaque cursor 缓存，不能把offset直接当游标。PC JSON已观察到protobuf默认值省略：只有has_more===true才续页；false或缺失都结束，不能用残留cursor或total推导更多。非boolean的has_more仍报错；在more=true时缺游标、重复/循环游标、空页带更多必须报错，不能无限重复第一页。
 - offset从0开始；未知offset可有限顺序回填，最多8页/一次调用、总时间/数据量有限，超出报 pagination 而不是返回假空页。
 - `playlists()` 合并自己与收藏歌单，去重时自己拥有优先；mine 只能由 owner.id 与 account.id 或可信created来源证明。
 - 喜欢歌单优先 playlist.type===1，名称匹配仅作为参考兼容路径，必须限制明确中文「我喜欢」/英文Liked，不能把任意收藏列表当喜欢；GET `/luna/pc/playlist/detail` query `playlist_id,cursor,count` 按media数组、has_more/next_cursor读取。喜欢歌单不存在不能判全空。
 - `playlist()` 宿主无分页，有限遍历最多50页/5000首、总25秒预算；到达上限仍more时抛明确不完整错误，而不是谎称已读完。
 - `isLiked(ids)` 只有在完整喜欢集合已获得时才能将不存在的id判false；不完整则报错，不输出全false。可短TTL缓存完整集合并在like后失效。
-- mixed_collections / user playlists 如果仅有total_num，无has_more且返回条数不足total，不能伪造分页已经完成；显式报分页契约缺失。允许只在用户列表本身被接口完整返回时终止。
+- 实际PC响应在终页省略has_more=false：喜欢歌单终页仍留next_cursor，再请求会得到playlist元信息但省略media_resources；历史终页省略has_more/next_cursor，返回总条数可少于total_num。以显式has_more=true为唯一续页条件，total_num仅作展示，不用于判定是否续页。必需身份/成功元信息缺失仍报错；已知列表字段缺失只在明确终页语义且有相应metadata（playlist.id匹配，或status_info有效）时允许表示空列表，不将任意{}当空结果。
 - `savedAlbums` 仅从明确 album 类型收藏映射，不混入歌曲或歌单。
 - `browse` 支持 discover/charts/history/library/推荐续页 等命名空间，页面字符串内部路由，不能解析为任意上游URL。已映射但不支持的卡片种类跳过，不把视频当歌曲。
 - 已实际确认 feed_scene_mode.scene_mode_id 是 number，服务端提供45个情景模式和3个偏好。情景 stations 以 mode_id 或 familiar/fresh 建立独立feed会话；played_media 最多30项、去重集合有界、每次拉取最多2个上游页。主页通过MorePage继续读取；不会每次都重置成first。
-- 任意缺失的必需list字段不是正常空内容，应抛响应错误；明确空数组才是空结果。
+- 已知PC protobuf列表终页可省略空数组；只在上述明确上下文中接受，不对未知形态递归猜测或全部转为空。has_more=true时缺list永远报错。
 
 ## Lyrics/comments 与 Actions 模块合同
 
 `helper/community.cjs` 提供 `Community({api,now?})`：`lyrics({id})`, `comments({trackId,offset})`, `postComment({trackId,text})`, `clear`。`helper/actions.cjs` 提供 `Actions({api,invalidate,account?})`，只实现上面有请求依据的动作。
 
 - 歌词解析支持普通LRC、字时间增强格式（如 `[start,duration]` 后 `<offset,duration,flags>word` 或 `(absoluteStart,duration,flags)word`），返回 `{lrc,translation}` 或 MyGo `lines/words`；正则处理长度≤1MiB、行数/词数限制，时间非负、end>=start、不执行HTML。纯文本/无歌词可返回原文LRC或空对象，格式损坏不得伪造时间。
-- 评论时间秒→毫秒，root count→total，当前用户liked字段仅有明确state时映射；comments 使用独立 trackId/offset→cursor，has_more false优先，不照搬cursor非空就more的错误逻辑。
+- 评论时间秒→毫秒，root count→total，当前用户liked字段仅有明确state时映射；comments 使用独立 trackId/offset→cursor，PC省略has_more=false时终止，只有true才续页，不以cursor非空推导more。明确成功的终页若comments缺失可按protobuf空数组处理；有更多或无成功/计数元信息时缺list仍报错。
 - 非幂等写操作发生网络错误须包装为固定的 mutation-unknown 文案（不可含原始响应、URL、Cookie），不自动重试。批量加歌逐个调用，指出已确认条目数量但不泄漏私有ID。
 
 ## 音质模块合同
