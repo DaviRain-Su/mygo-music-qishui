@@ -18,18 +18,22 @@ function alignTranslations(lines,translation) {
   // Match MyGo's nearest-time rule without a lines-by-translations nested scan.
   const sorted=[...lines].sort((a,b)=>a.start-b.start);
   const unique=sorted.filter((line,i)=>i===0||line.start!==sorted[i-1].start);
+  const translations=[];
   for(const source of translation.split(/\r?\n/)) {
     const tags=lrcTags(source);if(!tags.length)continue;
     const value=source.slice(tags.at(-1).end).trim();if(!value)continue;
-    for(const tag of tags) {
+    for(const tag of tags)translations.push({start:tag.start,value});
+  }
+  // MyGo sorts parsed translations stably before assigning competing entries.
+  translations.sort((a,b)=>a.start-b.start);
+  for(const tag of translations) {
       let lo=0,hi=unique.length;
       while(lo<hi) {const mid=(lo+hi)>>>1;if(unique[mid].start<tag.start)lo=mid+1;else hi=mid;}
       let best,gap=1500;
       for(const candidate of [unique[lo-1],unique[lo]]) {
         if(candidate&&Math.abs(candidate.start-tag.start)<gap) {best=candidate;gap=Math.abs(candidate.start-tag.start);}
       }
-      if(best&&best.translation===undefined)best.translation=value;
-    }
+      if(best&&best.translation===undefined)best.translation=tag.value;
   }
 }
 function parseLyrics(lyric) {
@@ -95,16 +99,21 @@ class Community {
         if(session.done||offset<session.next||session.next>=10000||this.now()-started>25000)throw error('pagination');
         const v=await this.api('/luna/pc/comments',{group_id:trackId,group_type:0,cursor:session.cursor,count:20});
         if(this.now()-started>25000)throw error('pagination');
-        if(!object(v)||!Array.isArray(v.comments)||typeof v.has_more!=='boolean')throw error('response');
-        if(v.comments.length>100)throw error('limit');
-        const total=number(v.count),comments=v.comments.map(mapComment),unique=new Set();
+        if(!object(v)||(v.has_more!==undefined&&typeof v.has_more!=='boolean'))throw error('response');
+        const more=v.has_more===true,total=number(v.count);
+        // Runtime validates API success; count supplies required page metadata.
+        // Protobuf may omit an empty terminal list, but never a more-page list.
+        const raw=v.comments===undefined&&!more?[]:v.comments;
+        if(!Array.isArray(raw))throw error('response');
+        if(raw.length>100)throw error('limit');
+        const comments=raw.map(mapComment),unique=new Set();
         for(const c of comments) {if(unique.has(c.id)||session.ids.has(c.id))throw error('pagination');unique.add(c.id);}
-        if(v.has_more&&(!comments.length||typeof v.cursor!=='string'||!v.cursor||v.cursor.length>4096||session.seen.has(v.cursor)))throw error('pagination');
-        const page={comments,total,more:v.has_more};session.pages.set(session.next,page);
+        if(more&&(!comments.length||typeof v.cursor!=='string'||!v.cursor||v.cursor.length>4096||session.seen.has(v.cursor)))throw error('pagination');
+        const page={comments,total,more};session.pages.set(session.next,page);
         if(session.pages.size>50)session.pages.delete(session.pages.keys().next().value);
         for(const value of unique)session.ids.add(value);
-        const at=session.next;session.next+=comments.length;session.done=!v.has_more;
-        if(v.has_more){session.cursor=v.cursor;session.seen.add(v.cursor);}
+        const at=session.next;session.next+=comments.length;session.done=!more;
+        if(more){session.cursor=v.cursor;session.seen.add(v.cursor);}
         if(at===offset)return structuredClone(page);
       }
       throw error('pagination');
