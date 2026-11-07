@@ -1,7 +1,7 @@
 'use strict';
 const MAX_LINE_BYTES = 65536;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-const OPS = new Set(['hello', 'signIn', 'account', 'signOut', 'request', 'probe', 'shutdown']);
+const OPS = new Set(['hello', 'signIn', 'account', 'signOut', 'request', 'stream', 'probe', 'shutdown']);
 const MESSAGES = Object.freeze({
   setup: '汽水 SDK 运行时未就绪。请在插件目录运行 node helper/install.cjs；依赖将安装到独立数据目录。不要在插件目录执行 npm install/ci。',
   protocol: '汽水辅助程序协议数据无效。',
@@ -17,6 +17,10 @@ const MESSAGES = Object.freeze({
   api: '汽水接口拒绝请求。',
   verification: '汽水要求的官方安全验证未完成。',
   unavailable: '当前环境无法运行汽水官方 SDK。',
+  audio: '这首歌的音频格式或授权数据暂不支持，未尝试绕过播放限制。',
+  entitlement: '当前账号没有这首歌所返回音质的可验证播放权限。',
+  preview: '服务端只提供了试听片段，当前插件不会将其作为完整版播放。',
+  ffmpeg: '音频转换失败。请确认已安装支持 AAC 和 libmp3lame 的 ffmpeg。',
 });
 function fault(code, details = {}) {
   const error = new Error(MESSAGES[code] || MESSAGES.unavailable);
@@ -49,6 +53,7 @@ function publicError(error) {
   const out = { code, message: MESSAGES[code] };
   if (Number.isInteger(error?.apiCode)) { out.apiCode = error.apiCode; out.message += `（错误码 ${error.apiCode}）`; }
   if (Number.isInteger(error?.httpStatus)) { out.httpStatus = error.httpStatus; out.message += `（HTTP ${error.httpStatus}）`; }
+  if (['metadata', 'entitlement', 'download', 'decrypt', 'encode', 'verify'].includes(error?.stage)) out.stage = error.stage;
   return out;
 }
 function encodeResponse(value) {

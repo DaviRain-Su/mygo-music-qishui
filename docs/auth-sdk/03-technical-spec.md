@@ -24,7 +24,7 @@ MyGo JS 插件 → 受进程权限控制的 Node launcher → 独立 Electron he
 
 协议版本 1；每行 UTF-8 JSON，最大请求 64 KiB。请求 `{id:正整数,op:string,params:object}`。
 
-允许操作：`hello`、`signIn`、`account`、`signOut`、`request`、`probe`（无凭据输出的 SDK 自检）、`shutdown`。不接受任意命令、任意外部 URL 或 JavaScript。
+允许操作：`hello`、`signIn`、`account`、`signOut`、`request`、`stream`（见播放修复规格）、`probe`（无凭据输出的 SDK 自检）、`shutdown`。不接受任意命令、任意外部 URL 或 JavaScript。
 
 响应：`{id,ok:true,result}` 或 `{id,ok:false,error:{code,message}}`；异步登录进度为 `{id,event:"prompt",qr?:string,text:string}`。
 
@@ -62,4 +62,4 @@ MyGo JS 插件 → 受进程权限控制的 Node launcher → 独立 Electron he
 - MyGo 0.1.7 真实运行时 + 本次私有会话：SignIn 成功返回真实账号，Home 映射6条、Search映射20条。
 - 已修正推荐使用 POST，以及 root result_groups / items / track_wrapper 的字段映射和毫秒时长。
 - 模拟覆盖旧 Cookie 不当成功、错误7/2046、取消、过期、helper EOF/超时、版本不匹配、路径逃逸、SDK摘要/大小、CSRF以SDK处理为准、账号独立验证。
-- 仍未验收的范围：用户当前桌面窗口实际切页、新账号新一轮扫码、真实二次验证UI完成、播放和完整歌单功能。发布说明必须保留这些限制。
+- 后续用户已确认能进入页面。0.3.0 增加基础播放授权/解码/转码，真实样本验证见 `05-playback-fix.md`；所有歌曲、音频设备出声、新账号/二次验证UI、完整歌单等仍需验收。发布说明必须保留这些限制。

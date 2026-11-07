@@ -22,7 +22,7 @@ async function dispatch(request) {
   const { id, op, params } = request;
   try {
     let result;
-    if (op === 'hello') result = { protocol: 1, version: '0.2.1', platform: process.platform, arch: process.arch };
+    if (op === 'hello') result = { protocol: 1, version: '0.3.0', platform: process.platform, arch: process.arch };
     else if (op === 'signIn') {
       if (loginId !== null) throw fault('busy'); loginId = id;
       try { result = await runtime.signIn(params.showWindow === true); } finally { loginId = null; }
@@ -31,6 +31,8 @@ async function dispatch(request) {
     else if (op === 'request') {
       if (loginId !== null) throw fault('busy');
       result = await runtime.api(params.path, params.params || {}, params.body);
+    } else if (op === 'stream') {
+      if (loginId !== null) throw fault('busy'); result = await runtime.stream(params);
     } else if (op === 'probe') {
       if (loginId !== null) throw fault('busy'); result = await runtime.probe();
     } else if (op === 'shutdown') {

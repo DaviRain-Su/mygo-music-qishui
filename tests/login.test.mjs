@@ -171,6 +171,29 @@ test('search handles root result_groups rather than requiring data.data', async 
   assert.equal(found.tracks.length, 1); assert.equal(found.tracks[0].id, 'track-7');
 });
 
+test('stream requests authorized preparation from the SDK helper and returns its local MP3', async t => {
+  const audio = { url: 'file:///private/plugin-data/qishui/auth-sdk/audio-cache/run-test/0123456789abcdef0123456789abcdef.mp3', type: 'mp3', quality: 'standard', bitRate: 128000, size: 123456 };
+  const { plugin, calls } = await loadPlugin(t, async request => request.op === 'signIn' ? success : audio);
+  await plugin.signIn();
+  const result = await plugin.stream({ id: 'track-7', quality: 'standard' });
+  assert.equal(result.url, audio.url); assert.equal(result.type, 'mp3');
+  assert.ok(calls.some(c => c.op === 'stream' && c.params.id === 'track-7'));
+  assert.equal(calls.some(c => c.op === 'request'), false);
+});
+
+test('stream cannot use a helper file outside its own private audio-cache', async t => {
+  const { plugin } = await loadPlugin(t, async request => request.op === 'signIn' ? success : { url: 'file:///etc/passwd', type: 'mp3', size: 4096 });
+  await plugin.signIn(); await assert.rejects(plugin.stream({ id: 'track-7' }));
+});
+
+test('playback entitlement denial is shown instead of falling back to another unauthorized URL', async t => {
+  const { plugin } = await loadPlugin(t, async request => {
+    if (request.op === 'signIn') return success;
+    throw { code: 'entitlement', message: '当前账号没有播放权限。' };
+  });
+  await plugin.signIn(); await assert.rejects(plugin.stream({ id: 'track-7' }), error => error.message.includes('播放权限'));
+});
+
 test('diagnostics do not contain private result cookies, QR tokens or account data', async t => {
   const { plugin, storage, logs } = await loadPlugin(t, async () => success);
   await plugin.signIn();

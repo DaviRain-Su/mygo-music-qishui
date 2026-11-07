@@ -39,6 +39,11 @@ rl.on('line',line=>{
   return answer({cookie:'sessionid=runtime-session',account:scenario==='invalid-account'?{}:{id:'user-42',name:'Test listener'}});
  }
  if(r.op==='request')return answer({data:{tracks:[{id:'t1',name:'SDK track'}]}});
+ if(r.op==='stream'){
+  const dataDir=process.argv[process.argv.indexOf('--data-dir')+1];
+  const url=require('node:url').pathToFileURL(dataDir+'/audio-cache/run-test/0123456789abcdef0123456789abcdef.mp3').href;
+  return answer({url,type:'mp3',quality:'standard',bitRate:128000,size:4096});
+ }
  return answer(null);
 });
 rl.on('close',()=>process.exit(0));
@@ -88,6 +93,10 @@ rl.on('close',()=>process.exit(0));
 					found, err := p.Search("test", music.SearchTracks, 0)
 					if err != nil || len(found.Tracks) != 1 || found.Tracks[0].ID != "t1" {
 						t.Fatalf("SDK catalog: %+v, %v", found, err)
+					}
+					stream, err := p.Stream("t1", "standard")
+					if err != nil || stream == nil || stream.Type != "mp3" || stream.Size != 4096 {
+						t.Fatalf("SDK audio stream: %+v, %v", stream, err)
 					}
 				}
 			case <-time.After(10 * time.Second):

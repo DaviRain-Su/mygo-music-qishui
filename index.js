@@ -1,23 +1,15 @@
 // MyGo Qishui: official browser SDK authentication runs in a private helper.
 // No unsigned-fetch fallback, no default/placeholder successful account.
-const VERSION = "0.2.1";
-const UA = "LunaPC/3.5.2";
+const VERSION = "0.3.0";
 const t = typeof host.t === "function" ? (text) => host.t(text) : (text) => text;
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const cookie = () => host.storage.get("authBackend") === "sdk-v1" ? host.storage.get("cookie") || "" : "";
 function fail(code, message) { const error = new Error(message); error.code = code; return error; }
 function needAccount() { if (!account()) throw fail("signIn", "请先使用官方 SDK 登录汽水音乐。"); }
-async function program(name, ...args) {
-  for (const candidate of name === "ffmpeg" ? [name, "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"] : [name]) {
-    try { const process = host.spawn(candidate, args); process.closeStdin(); if (await process.wait() === 0) return candidate; } catch {}
-  }
-  return null;
-}
 
 // ---------- Private JSONL helper ----------
 let helper = null, starting = null, signingIn = false;
 const STAGES = new Set(["starting", "waiting-scan", "scanned", "verification", "verifying-account", "authenticated", "failed"]);
-const ERROR_CODES = new Set(["setup", "protocol", "busy", "network", "timeout", "cancelled", "sdk", "integrity", "response", "session", "account", "api", "verification", "unavailable"]);
+const ERROR_CODES = new Set(["setup", "protocol", "busy", "network", "timeout", "cancelled", "sdk", "integrity", "response", "session", "account", "api", "verification", "unavailable", "audio", "entitlement", "preview", "ffmpeg"]);
 function diagnostic(stage, error) {
   const info = { version: VERSION, backend: "official-sdk", stage, at: new Date().toISOString() };
   if (Number.isInteger(error?.apiCode)) info.errorCode = error.apiCode;
@@ -27,12 +19,13 @@ function diagnostic(stage, error) {
 }
 function helperError(value) {
   const code = ERROR_CODES.has(value?.code) ? value.code : "protocol";
-  const setup = ["setup", "integrity", "unavailable"].includes(code);
+  const setup = ["setup", "integrity", "unavailable", "ffmpeg"].includes(code);
   const message = ERROR_CODES.has(value?.code) && typeof value.message === "string" && value.message.length <= 4000
     ? value.message : "汽水 SDK 辅助程序通信失败，请检查安装和进程权限。";
   const error = fail(setup ? "setup" : "qishui-" + code, message);
   if (Number.isInteger(value?.apiCode)) error.apiCode = value.apiCode;
   if (Number.isInteger(value?.httpStatus)) error.httpStatus = value.httpStatus;
+  if (["metadata", "entitlement", "download", "decrypt", "encode", "verify"].includes(value?.stage)) error.stage = value.stage;
   return error;
 }
 function stopHelper(client, error) {
@@ -174,9 +167,9 @@ function toTrack(raw, index, fallbackAlbum) {
   if (!id || !name) return null;
   const albumLink = related.album_link || related.album || base.album || display.album || {};
   const albumName = textOf(albumLink.name) || textOf(albumLink.title) || textOf(base.album_name);
-  const cover = imageOf(display.cover_url || display.url_cover || base.cover_url || albumLink.cover_url || track?.cover_url || media.cover_url || raw?.cover_url);
+  const cover = imageOf(display.cover_url || display.url_cover || base.cover_url || albumLink.cover_url || albumLink.url_cover || track?.cover_url || media.cover_url || raw?.cover_url);
   return {
-    id, name, artists: artistsOf(related.artist_links ? related : base.artist_links ? base : raw),
+    id, name, artists: artistsOf(related.artist_links || related.artists ? related : base.artist_links || base.artists ? base : raw),
     album: { id: String(albumLink.id || ""), name: albumName, imageUrl: cover },
     duration: Number(base.duration_ms || base.duration || track?.duration_ms || track?.duration || media.duration || raw?.duration || 0),
     imageUrl: cover, albumId: String(albumLink.id || fallbackAlbum || ""),
@@ -231,39 +224,27 @@ export async function liked({ offset }) {
   return { tracks, more: tracks.length >= 30 };
 }
 
-// ---------- Playback: ffmpeg converts supported source audio to MP3 ----------
-const serving = [], servingAtMost = 3, servedWithin = 10 * 60 * 1000;
-function stopWaiting() { while (serving.length >= servingAtMost) serving.shift().kill(); }
-async function serve(sourceUrl, bitRate) {
-  const ffmpeg = await program("ffmpeg", "-version");
-  if (!ffmpeg) throw fail("setup", t("Qishui plays through ffmpeg: install it with Homebrew, or so that it's on the PATH"));
-  stopWaiting();
-  const port = 20000 + Math.floor(Math.random() * 40000);
-  const proc = host.spawn(ffmpeg, [
-    "-nostdin", "-hide_banner", "-nostats", "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-rw_timeout", "15000000",
-    "-user_agent", UA, "-i", sourceUrl, "-vn", "-c:a", "libmp3lame", "-b:a", `${bitRate}k`, "-id3v2_version", "0", "-write_xing", "0",
-    "-f", "mp3", "-listen", "1", `http://127.0.0.1:${port}/`,
-  ]);
-  proc.closeStdin(); serving.push(proc);
-  let stopped = false;
-  const timer = setTimeout(() => proc.kill(), servedWithin);
-  proc.wait().then(() => { stopped = true; clearTimeout(timer); const at = serving.indexOf(proc); if (at >= 0) serving.splice(at, 1); });
-  const until = Date.now() + 15000;
-  while (!proc.errorOutput().includes("Input #0")) {
-    if (stopped || Date.now() > until) { proc.kill(); throw new Error(t("the audio didn't start in time")); }
-    await sleep(30);
-  }
-  await sleep(100); return `http://127.0.0.1:${port}/`;
-}
-function streamUrlOf(payload) {
-  const data = payload?.data ?? payload ?? {}, audio = data.audio_info || data.audioInfo || {};
-  for (const item of audio.play_info_list || audio.playInfoList || []) { const url = item.url || item.main_play_url || item.main_url || item.play_url; if (url) return url; }
-  return data.play_url || data.main_play_url || data.main_url || data.track?.play_url || data.track?.main_play_url || "";
-}
-export async function stream({ id, quality }) {
+// ---------- Playback: the helper resolves rights, decrypts authorized audio and prepares MP3 ----------
+export async function stream({ id, quality = "standard" }) {
   needAccount();
-  const source = streamUrlOf(await api("/luna/pc/track_v2", lunaParams({ track_id: id, media_type: "track" })));
-  if (!source) throw fail("unavailable", t("No playable audio for this track"));
-  const kbps = quality === "standard" ? 128 : 192;
-  return { url: await serve(source, kbps), type: "mp3", quality: kbps === 128 ? "standard" : "high", bitRate: kbps * 1000 };
+  let result;
+  try { result = await send(await ensureHelper(), "stream", { id, quality }, 28000); }
+  catch (error) {
+    host.storage.set("playbackDiagnostic", {
+      version: VERSION, status: "failed", ...(error.stage ? { stage: error.stage } : {}),
+      ...(Number.isInteger(error.apiCode) ? { errorCode: error.apiCode } : {}),
+    });
+    throw error;
+  }
+  let url;
+  try { url = new URL(result?.url); } catch { throw fail("unavailable", "汽水辅助程序没有返回有效音频。"); }
+  const expected = host.dataDir.replace(/\/$/, "") + "/auth-sdk/audio-cache/";
+  const file = decodeURIComponent(url.pathname);
+  if (url.protocol !== "file:" || url.hostname || url.search || url.hash || !file.startsWith(expected) ||
+      !/^run-[A-Za-z0-9]+\/[a-f0-9]{32}\.mp3$/.test(file.slice(expected.length)) ||
+      result.type !== "mp3" || !Number.isSafeInteger(result.size) || result.size <= 0) {
+    throw fail("unavailable", "汽水辅助程序返回了无法验证的音频文件。");
+  }
+  host.storage.set("playbackDiagnostic", { version: VERSION, status: "prepared", size: result.size });
+  return { url: url.href, type: "mp3", size: result.size, quality: result.quality, bitRate: result.bitRate };
 }

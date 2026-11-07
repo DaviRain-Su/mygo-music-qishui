@@ -7,6 +7,7 @@ const { loadRuntime } = require('./dependencies.cjs');
 const { ensureAssets, ASSETS } = require('./assets.cjs');
 const { fault, apiURL } = require('./protocol.cjs');
 const { runLogin, hasSession } = require('./auth-flow.cjs');
+const { Playback } = require('./playback.cjs');
 const API = 'https://api.qishui.com';
 const APP_VERSION = '3.5.2';
 const ORIGIN = 'app://resources';
@@ -45,6 +46,7 @@ class Runtime {
     this.sdkReady = false; this.native = null; this.nativeLoaded = false; this.locked = false;
     this.dependencies = loadRuntime(dataDir);
     this.qrcode = this.dependencies.require('qrcode');
+    this.playback = new Playback({ dataDir, api: (...args) => this.api(...args) });
   }
   async base() {
     if (this.identity) return;
@@ -222,7 +224,7 @@ class Runtime {
     }
     return this.native;
   }
-  async api(pathname, params = {}, body) {
+  async api(pathname, params = {}, body, signal) {
     await this.base();
     const url = apiURL(pathname, params);
     const common = {
@@ -243,7 +245,7 @@ class Runtime {
     for (let index = 0; index + 1 < signature.length; index += 2) if (/^x-[a-z0-9-]+$/i.test(signature[index])) headers[signature[index]] = signature[index + 1];
     if (!Object.keys(headers).some(k => /^x-(helios|medusa)$/i.test(k))) throw fault('sdk');
     let response;
-    try { response = await fetch(url, { method: text ? 'POST' : 'GET', headers, body: text, redirect: 'error', signal: AbortSignal.timeout(20000) }); }
+    try { response = await fetch(url, { method: text ? 'POST' : 'GET', headers, body: text, redirect: 'error', signal: signal || AbortSignal.timeout(20000) }); }
     catch { throw fault('network'); }
     return checkPacket(parseJSON(await response.text(), response.status));
   }
@@ -303,13 +305,23 @@ class Runtime {
     this.controller?.abort();
     if (this.window && !this.window.isDestroyed()) this.exec('cancel').catch(() => {});
   }
+  async stream(params) {
+    if (this.locked) throw fault('busy');
+    if (!hasSession(await this.cookieHeader())) throw fault('session');
+    return this.playback.prepare(params);
+  }
   async signOut() {
     this.cancel(); await this.base();
+    await this.playback.close();
+    this.playback = new Playback({ dataDir: this.dataDir, api: (...args) => this.api(...args) });
     if (this.window && !this.window.isDestroyed()) this.window.destroy();
     await this.ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'] });
     this.msToken = ''; this.issuedToken = ''; this.sdkReady = false;
   }
-  async close() { this.cancel(); if (this.window && !this.window.isDestroyed()) this.window.destroy(); }
+  async close() {
+    this.cancel(); if (this.window && !this.window.isDestroyed()) this.window.destroy();
+    await this.playback.close();
+  }
   async probe() {
     await this.ready();
     const packet = checkPacket(await this.passport('/passport/web/get_qrcode/', { query: { next: API, need_logo: false, need_short_url: false } }));
