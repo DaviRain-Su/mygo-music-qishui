@@ -4,7 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { spawn } = require('node:child_process');
-const { selectAudio, decryptAudio, audioURL, MAX_AUDIO_BYTES } = require('./audio.cjs');
+const { selectAudio, decryptAudio, losslessAudio, audioURL, MAX_AUDIO_BYTES } = require('./audio.cjs');
 const { fault } = require('./protocol.cjs');
 
 async function downloadAudio(address, signal, fetcher = fetch) {
@@ -30,14 +30,28 @@ async function downloadAudio(address, signal, fetcher = fetch) {
   }
   throw fault('audio');
 }
-async function transcode(input, output, bitRate, signal) {
+async function transcode(input, output, bitRate, signal, format = 'mp3') {
+  if (!['mp3', 'flac'].includes(format)) throw fault('audio');
+  let expectedPCMBytes;
+  if (format === 'flac') {
+    const source = losslessAudio(await fs.readFile(input));
+    // STREAMINFO: 20-bit rate, 3-bit channels-1, 5-bit depth-1,
+    // 36-bit total samples. Keep the original count: remuxing may rewrite it.
+    const info = source.readBigUInt64BE(18);
+    const samples = Number(info & ((1n << 36n) - 1n));
+    const channels = Number((info >> 41n) & 7n) + 1;
+    expectedPCMBytes = samples * channels * 4;
+    // Unknown length cannot establish completeness. Bound decoded work as well
+    // as compressed size; PCM is streamed and discarded, never written to disk.
+    if (!samples || expectedPCMBytes > 512 * 1024 * 1024) throw fault('ffmpeg');
+  }
   const commands = process.platform === 'darwin' ? ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', 'ffmpeg'] : ['ffmpeg'];
   for (const command of commands) {
     if (signal.aborted) throw fault('timeout');
     const result = await new Promise(resolve => {
       const proc = spawn(command, [
         '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-protocol_whitelist', 'file,pipe',
-        '-i', input, '-map', '0:a:0', '-vn', '-c:a', 'libmp3lame', '-b:a', bitRate + 'k', '-map_metadata', '-1', '-f', 'mp3', output,
+        '-i', input, '-map', '0:a:0', '-vn', ...(format === 'flac' ? ['-c:a', 'copy'] : ['-c:a', 'libmp3lame', '-b:a', bitRate + 'k']), '-map_metadata', '-1', '-fs', String(MAX_AUDIO_BYTES), '-f', format, output,
       ], { stdio: ['ignore', 'ignore', 'ignore'], shell: false });
       const kill = () => proc.kill('SIGKILL'); signal.addEventListener('abort', kill, { once: true });
       proc.once('error', error => { signal.removeEventListener('abort', kill); resolve({ missing: error.code === 'ENOENT' }); });
@@ -46,9 +60,36 @@ async function transcode(input, output, bitRate, signal) {
     if (signal.aborted) throw fault('timeout');
     if (result.missing) continue;
     if (result.code !== 0) throw fault('ffmpeg');
+    if (format === 'flac') await verifyFlac(command, output, expectedPCMBytes, signal);
     return;
   }
   throw fault('ffmpeg');
+}
+async function verifyFlac(command, file, expectedBytes, signal) {
+  if (signal.aborted) throw fault('timeout');
+  const valid = await new Promise(resolve => {
+    let bytes = 0, overflow = false;
+    const proc = spawn(command, [
+      '-nostdin', '-hide_banner', '-loglevel', 'error', '-xerror',
+      '-err_detect', 'crccheck+explode', '-protocol_whitelist', 'file,pipe',
+      '-i', file, '-map', '0:a:0', '-vn', '-c:a', 'pcm_s32le', '-f', 's32le', 'pipe:1',
+    ], { stdio: ['ignore', 'pipe', 'ignore'], shell: false });
+    const kill = () => proc.kill('SIGKILL');
+    signal.addEventListener('abort', kill, { once: true });
+    if (signal.aborted) kill();
+    proc.stdout.on('data', chunk => {
+      bytes += chunk.length;
+      if (bytes > expectedBytes) { overflow = true; kill(); }
+    });
+    proc.once('error', () => { signal.removeEventListener('abort', kill); resolve(false); });
+    // close waits for stdout to drain, unlike exit.
+    proc.once('close', code => {
+      signal.removeEventListener('abort', kill);
+      resolve(code === 0 && !overflow && bytes === expectedBytes);
+    });
+  });
+  if (signal.aborted) throw fault('timeout');
+  if (!valid) throw fault('ffmpeg');
 }
 class Playback {
   constructor({ dataDir, api, fetcher = fetch, encoder = transcode }) {
@@ -72,7 +113,7 @@ class Playback {
   async prepare({ id, quality = 'standard' } = {}) {
     if (this.closed || typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw fault('protocol');
     if (!['standard', 'high', 'lossless'].includes(quality)) throw fault('protocol');
-    const bitRate = quality === 'standard' ? 128 : 192, key = `${id}:${bitRate}`;
+    const bitRate = quality === 'standard' ? 128 : 192, key = `${id}:${quality}:${quality === 'lossless' ? 'flac' : 'mp3'}`;
     const cached = this.cache.get(key);
     if (cached && Date.now() - cached.at < 300000) return cached.result;
     if (this.pending.has(key)) return this.pending.get(key);
@@ -92,20 +133,21 @@ class Playback {
       const profile = me.my_info || me.data?.my_info || me.data?.user || {};
       stage = 'entitlement'; selected = selectAudio(payload, { quality, isVip: profile.is_vip === true });
       stage = 'download'; const encrypted = await downloadAudio(selected.url, controller.signal, this.fetcher); check();
-      stage = 'decrypt'; const clear = selected.key ? decryptAudio(encrypted, selected.key) : encrypted;
+      stage = 'decrypt'; const clear = quality === 'lossless' ? losslessAudio(encrypted, selected.key) : selected.key ? decryptAudio(encrypted, selected.key) : encrypted;
+      const format = quality === 'lossless' ? 'flac' : 'mp3';
       selected.key?.fill(0); check();
       temporary = await fs.mkdtemp(path.join(root, 'work-')); await fs.chmod(temporary, 0o700);
-      const input = path.join(temporary, 'audio.m4a'); await fs.writeFile(input, clear, { mode: 0o600 });
-      output = path.join(root, crypto.randomBytes(16).toString('hex') + '.mp3');
+      const input = path.join(temporary, format === 'flac' ? 'audio.flac' : 'audio.m4a'); await fs.writeFile(input, clear, { mode: 0o600 });
+      output = path.join(root, crypto.randomBytes(16).toString('hex') + '.' + format);
       await fs.writeFile(output, '', { mode: 0o600, flag: 'wx' });
-      stage = 'encode'; await this.encoder(input, output, bitRate, controller.signal); check();
+      stage = 'encode'; await this.encoder(input, output, bitRate, controller.signal, format); check();
       stage = 'verify'; const stat = await fs.stat(output);
-      if (stat.size < 1024 || stat.size > MAX_AUDIO_BYTES) throw fault('ffmpeg');
-      const handle = await fs.open(output, 'r'); const signature = Buffer.alloc(3);
-      try { await handle.read(signature, 0, 3, 0); } finally { await handle.close(); }
-      if (signature.toString('ascii') !== 'ID3' && !(signature[0] === 255 && (signature[1] & 224) === 224)) throw fault('ffmpeg');
+      if (stat.size < 1024 || stat.size >= MAX_AUDIO_BYTES) throw fault('ffmpeg');
+      const handle = await fs.open(output, 'r'); const signature = Buffer.alloc(4);
+      try { await handle.read(signature, 0, 4, 0); } finally { await handle.close(); }
+      if (format === 'flac' ? signature.toString('ascii') !== 'fLaC' : signature.subarray(0, 3).toString('ascii') !== 'ID3' && !(signature[0] === 255 && (signature[1] & 224) === 224)) throw fault('ffmpeg');
       await fs.chmod(output, 0o600);
-      const result = { url: pathToFileURL(output).href, type: 'mp3', size: stat.size, quality: bitRate === 128 ? 'standard' : 'high', bitRate: bitRate * 1000 };
+      const result = { url: pathToFileURL(output).href, type: format, size: stat.size, quality, ...(format === 'mp3' ? { bitRate: bitRate * 1000 } : {}) };
       const previous = this.cache.get(cacheKey);
       if (previous) await fs.rm(previous.file, { force: true }).catch(() => {});
       this.cache.delete(cacheKey); this.cache.set(cacheKey, { result, file: output, at: Date.now() });

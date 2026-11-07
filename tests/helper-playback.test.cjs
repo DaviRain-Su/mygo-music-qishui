@@ -2,7 +2,6 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const os = require('node:os');
 const { fileURLToPath } = require('node:url');
 const { Playback, downloadAudio, transcode } = require('../helper/playback.cjs');
 
@@ -11,7 +10,7 @@ function fixture() {
     track_player: { video_model: JSON.stringify({ video_duration: 180, video_list: [{ main_url: 'https://v3-luna.douyinvod.com/audio?private-signature=test-secret', video_meta: { quality: 'medium', vtype: 'm4a', codec_type: 'aac' }, encrypt_info: { encrypt: false } }] }) } };
 }
 async function sandbox(t) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'qishui-playback-')); t.after(() => fs.rm(root, { recursive: true, force: true })); return root;
+  const root = await fs.mkdtemp(path.join(__dirname, '..', '.quality-playback-')); t.after(() => fs.rm(root, { recursive: true, force: true })); return root;
 }
 
 test('prepares an authorized local MP3 and keeps URL/key/cookie out of the result', async t => {
@@ -57,4 +56,96 @@ test('invalid identifiers cannot become file paths or remote requests', async t 
   const root = await sandbox(t); const playback = new Playback({ dataDir: root, api: async () => { throw new Error('not reached'); } });
   for (const id of ['../key', 'https://evil.test', '', 'a'.repeat(300)]) await assert.rejects(playback.prepare({ id }));
   await playback.close();
+});
+
+test('synthetic FLAC stays lossless through MP4 extraction, ffmpeg and separate caches', { timeout: 15000 }, async t => {
+  const { spawnSync } = require('node:child_process');
+  const { losslessAudio } = require('../helper/audio.cjs');
+  const root = await sandbox(t), source = path.join(root, 'source.flac'), mp4 = path.join(root, 'source.mp4');
+  function ffmpeg(args) {
+    const result = spawnSync('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], { timeout: 4000, maxBuffer: 65536 });
+    assert.equal(result.status, 0, 'local ffmpeg fixture generation must succeed');
+  }
+  ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.2', '-c:a', 'flac', source]);
+  ffmpeg(['-i', source, '-c:a', 'copy', '-strict', '-2', mp4]);
+  const raw = await fs.readFile(source), container = await fs.readFile(mp4);
+  assert.deepEqual(losslessAudio(raw), raw);
+  const extracted = losslessAudio(container); assert.equal(extracted.subarray(0, 4).toString(), 'fLaC');
+  const extractedFile = path.join(root, 'extracted.flac'); await fs.writeFile(extractedFile, extracted);
+  ffmpeg(['-i', source, '-f', 's16le', path.join(root, 'a.pcm')]);
+  ffmpeg(['-i', extractedFile, '-f', 's16le', path.join(root, 'b.pcm')]);
+  assert.deepEqual(await fs.readFile(path.join(root, 'a.pcm')), await fs.readFile(path.join(root, 'b.pcm')));
+  const p = fixture(), model = JSON.parse(p.track_player.video_model);
+  model.video_list[0].video_meta.codec_type = 'flac'; p.track_player.video_model = model;
+  const playback = new Playback({ dataDir: root, api: async name => name.endsWith('/me') ? { my_info: {} } : p,
+    fetcher: async () => new Response(container) });
+  t.after(() => playback.close());
+  const result = await playback.prepare({ id: 'synthetic', quality: 'lossless' });
+  assert.equal(result.type, 'flac'); assert.equal(result.quality, 'lossless'); assert.ok(result.url.endsWith('.flac'));
+  assert.equal(result.bitRate, undefined);
+  assert.equal((await fs.readFile(fileURLToPath(result.url))).subarray(0, 4).toString(), 'fLaC');
+  assert.equal(playback.cache.has('synthetic:lossless:flac'), true);
+  assert.equal((await playback.prepare({ id: 'synthetic', quality: 'lossless' })).url, result.url);
+  await assert.rejects(playback.prepare({ id: 'synthetic', quality: 'high' }));
+  assert.equal((await fs.readdir(await playback.init())).filter(n => n.startsWith('work-')).length, 0);
+});
+
+test('aborted encoder and invalid lossless output clean partial files', { timeout: 3000 }, async t => {
+  const root = await sandbox(t);
+  const p = fixture(); p.track_player.video_model = JSON.parse(p.track_player.video_model);
+  p.track_player.video_model.video_list[0].video_meta.codec_type = 'flac';
+  const raw = Buffer.concat([Buffer.from('fLaC'), Buffer.from([128, 0, 0, 34]), Buffer.alloc(34), Buffer.alloc(2048)]);
+  for (const abort of [false, true]) {
+    let playback;
+    playback = new Playback({ dataDir: root, api: async name => name.endsWith('/me') ? {} : p,
+      fetcher: async () => new Response(raw), encoder: async (_input, output) => {
+        await fs.writeFile(output, Buffer.concat([Buffer.from('ID3'), Buffer.alloc(2048)]));
+        if (abort) for (const controller of playback.controllers) controller.abort();
+      } });
+    await assert.rejects(playback.prepare({ id: 'test', quality: 'lossless' }), { code: abort ? 'timeout' : 'ffmpeg' });
+    assert.deepEqual(await fs.readdir(await playback.init()), []);
+    await playback.close();
+  }
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(transcode('unused', 'unused', 128, controller.signal), { code: 'timeout' });
+});
+
+test('real corrupt or truncated FLAC is rejected before caching and all partial files are removed', { timeout: 15000 }, async t => {
+  const { spawnSync } = require('node:child_process');
+  const root = await sandbox(t), source = path.join(root, 'complete.flac');
+  const generated = spawnSync('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+    'sine=frequency=440:duration=2', '-c:a', 'flac', source], { timeout: 4000 });
+  assert.equal(generated.status, 0);
+  const raw = await fs.readFile(source);
+  // A mid-frame cut produces decoder errors. A complete-frame prefix can decode
+  // successfully, but must still fail the original STREAMINFO sample count.
+  const frames = [];
+  for (let i = 42; i < raw.length - 1; i++) if (raw[i] === 255 && (raw[i + 1] & 254) === 248) frames.push(i);
+  assert.ok(frames.length > 3);
+  const corrupt = Buffer.from(raw);
+  corrupt.fill(0, Math.floor(raw.length * 0.65), Math.floor(raw.length * 0.65) + 128);
+  for (const damaged of [raw.subarray(0, Math.floor(raw.length * 0.65)), raw.subarray(0, frames[frames.length - 2]), corrupt]) {
+    const p = fixture(); p.track_player.video_model = JSON.parse(p.track_player.video_model);
+    p.track_player.video_model.video_list[0].video_meta.codec_type = 'flac';
+    const playback = new Playback({ dataDir: root, api: async name => name.endsWith('/me') ? {} : p,
+      fetcher: async () => new Response(damaged) });
+    t.after(() => playback.close());
+    await assert.rejects(playback.prepare({ id: 'truncated', quality: 'lossless' }), { code: 'ffmpeg' });
+    assert.equal(playback.cache.size, 0);
+    assert.equal(playback.pending.size, 0);
+    assert.deepEqual(await fs.readdir(await playback.init()), []);
+    await playback.close();
+  }
+});
+
+
+test('FLAC verification rejects unknown sample counts and excessive decoded size', async t => {
+  const root = await sandbox(t), input = path.join(root, 'bounded.flac'), output = path.join(root, 'out.flac');
+  for (const samples of [0n, (1n << 36n) - 1n]) {
+    const raw = Buffer.concat([Buffer.from('fLaC'), Buffer.from([128, 0, 0, 34]), Buffer.alloc(34), Buffer.alloc(2048)]);
+    raw.writeBigUInt64BE((44100n << 44n) | (15n << 36n) | samples, 18);
+    await fs.writeFile(input, raw);
+    await assert.rejects(transcode(input, output, 192, new AbortController().signal, 'flac'), { code: 'ffmpeg' });
+    await assert.rejects(fs.access(output));
+  }
 });
