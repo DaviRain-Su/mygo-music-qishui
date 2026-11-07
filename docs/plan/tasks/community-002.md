@@ -1,7 +1,7 @@
 ---
 id: community-002
 scope: community-terminal-pages-and-translation-order
-status: ready
+status: done
 depends-on: [community-001]
 ---
 

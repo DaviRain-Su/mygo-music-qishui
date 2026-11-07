@@ -1,7 +1,7 @@
 ---
 id: catalog-002
 scope: catalog-live-protobuf-compatibility
-status: ready
+status: done
 depends-on: [catalog-001]
 ---
 
