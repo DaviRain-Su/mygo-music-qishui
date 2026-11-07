@@ -97,3 +97,58 @@ test('comments extract HTTP avatar URLs from object urls without treating uri as
   assert.equal(mapped('https://example.test/legacy').avatarUrl,'https://example.test/legacy');
   for(const avatar of [{uri:'asset/key',urls:[]},{urls:[null,{}]},null]) assert.equal(mapped(avatar).avatarUrl,undefined);
 });
+
+test('omitted has_more terminates listed comments despite leftover cursor or total',async()=>{
+  for(const cursor of [undefined,'leftover']) {
+    let calls=0;
+    const c=new Community({api:async()=>{calls++;return {comments:[row('last')],count:'99',cursor};}});
+    const page=await c.comments({trackId:'t'});
+    assert.equal(page.more,false);
+    assert.equal(page.total,99);
+    assert.equal(page.comments[0].id,'last');
+    assert.deepEqual(await c.comments({trackId:'t'}),page);
+    await assert.rejects(c.comments({trackId:'t',offset:1}),{code:'pagination'});
+    assert.equal(calls,1);
+  }
+});
+test('terminal protobuf empty comments require valid count metadata',async()=>{
+  for(const has_more of [undefined,false]) {
+    for(const metadata of [{count:'0'},{count:'9',status_info:{status_code:0}}]) {
+      const c=new Community({api:async()=>({...metadata,has_more,cursor:'leftover'})});
+      assert.deepEqual(await c.comments({trackId:'t'}),{comments:[],total:Number(metadata.count),more:false});
+    }
+  }
+  for(const reply of [{},{status_info:{status_code:0}},{count:null},{count:'bad'},
+    {count:'0',comments:null},{count:'0',comments:{}},{count:'0',has_more:true,cursor:'next'},
+    ...[null,0,1,'false','true',{}].map(has_more=>({comments:[],count:'0',has_more}))]) {
+    const c=new Community({api:async()=>reply});
+    await assert.rejects(c.comments({trackId:'t'}),{code:'response'});
+  }
+});
+test('omitted empty terminal page follows opaque cursor and cannot satisfy unknown offsets',async()=>{
+  let calls=0;
+  const c=new Community({api:async(_path,query)=>{
+    calls++;
+    if(calls===1)return {comments:[row('first')],count:'99',has_more:true,cursor:'opaque'};
+    assert.equal(query.cursor,'opaque');
+    return {count:'99',cursor:'opaque',status_info:{status_code:0}};
+  }});
+  assert.deepEqual(await c.comments({trackId:'t',offset:1}),{comments:[],total:99,more:false});
+  await assert.rejects(c.comments({trackId:'t',offset:2}),{code:'pagination'});
+  assert.equal(calls,2);
+});
+test('translation competitors are stably sorted by timestamp before nearest-line assignment',()=>{
+  const content='[3000,500]<0,500,0>Line';
+  for(const translation of [
+    '[00:03.00]later\n[00:02.00]earlier\n[00:02.00]equal-time second',
+    '[00:03.00][00:02.00]earlier\n[00:02.50]middle',
+  ]) {
+    const parsed=parseLyrics({content,translations:{cn:translation}});
+    assert.equal(parsed.lines[0].translation,'earlier');
+    assert.equal(parsed.translation,translation);
+  }
+  for(const [timestamp,expected] of [['00:01.500',undefined],['00:01.501','edge'],['00:04.499','edge'],['00:04.500',undefined]]) {
+    assert.equal(parseLyrics({content,translations:{cn:`[${timestamp}]edge`}}).lines[0].translation,expected);
+  }
+  assert.equal(parseLyrics({content,translations:{cn:'[00:02.00]first\n[00:02.00]second'}}).lines[0].translation,'first');
+});

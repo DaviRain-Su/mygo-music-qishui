@@ -63,7 +63,11 @@ returned verbatim as strings, never interpreted as HTML. Enhanced relative
 millisecond lines/words. The top-level `translation` LRC string is preserved;
 structured lines also receive `translation` text matched to the nearest start
 within strictly less than 1,500 ms, with earlier timestamps winning ties, as in
-MyGo. Multiple LRC timestamps are supported. Untimed/unmatched translations stay
+MyGo. Multiple LRC timestamps are supported. The top-level translation string
+retains its original order; timed translations are stably sorted by start
+before matching, so the earliest competing timestamp wins and equal timestamps
+retain source order. The matching window excludes exactly 1,500 ms on either side.
+Untimed/unmatched translations stay
 in the top-level string without invented timing (MyGo ignores that string when
 structured lines exist). Bracket scanning excludes nested opening brackets so
 malformed bracket runs cannot trigger overlapping suffix scans.
@@ -76,7 +80,12 @@ only boolean `liked` to liked state. Avatar objects use the first valid HTTP(S)
 URL in `medium_avatar_url.urls`; the asset `uri` is not treated as a URL. Legacy
 string avatars remain supported; absent or invalid object URLs are omitted. Missing optional author/count/time fields are
 omitted or empty; missing comment id/content or required page fields is an error.
-`has_more:false` wins even with a nonempty cursor. Offsets identify page boundaries,
+Only `has_more:true` continues pagination; false or omitted means terminal, even
+with a nonempty cursor or a larger count. Nonboolean supplied values are errors.
+On terminal pages only, omitted `comments` means an empty list when a valid root
+`count` is present. Runtime must validate API success before returning the response;
+success metadata alone does not replace the required count. Null/malformed lists
+and more-pages without a list remain errors. Offsets identify page boundaries,
 not upstream cursors. Unknown boundaries backfill at most eight requests per call,
 with a 25-second elapsed budget checked around each request. Runtime must bound
 individual network request time; this module cannot cancel a hanging injected API.
@@ -108,9 +117,35 @@ the reviewed implementation, then passed after fixes: malformed bracket runs in
 a subprocess with a two-second deadline; structured-line translation alignment;
 object-shaped avatar URLs; caller mutation during append; and sparse/oversized
 batch rejection before writes. All original tests remain. Independent re-review
-of commit `db0816d` passed the offline module gate (20/20 tests). A nonblocking
-translation timestamp ordering difference is tracked in docs/plan/backlog.md.
+of commit `db0816d` passed the offline module gate (20/20 tests). The translation
+timestamp ordering difference recorded in docs/plan/backlog.md is resolved by
+community-002; the orchestrator owns updating that out-of-scope backlog entry.
 Only synthetic injected fixtures were used. No network, credentials or real
 account data were accessed; the account-derived read-results file was deliberately
 not read. Local source contracts and MyGo DTO declarations supplied context.
 Real writes, host integration, and live response compatibility remain unverified.
+
+## community-002 handoff
+
+Ready for orchestrator commit; no Git metadata writes or bypass attempts were made.
+Changes are limited to `helper/community.cjs`, `tests/helper-community.test.cjs`,
+and this handoff. Actions and integration modules are unchanged.
+
+Evidence read: the current `docs/features/README.md` PC protobuf structural
+contract and local `/tmp/mygo-check/internal/lyrics/lyrics.go` (`parseLRC` stable
+sort and `Build` nearest-line assignment). Fixtures are synthetic; no network,
+real account files, credentials, or remote mutations were used.
+
+TDD red: `node --test tests/helper-community.test.cjs` passed the 12 existing
+tests and failed all four new regressions before implementation. Green:
+`node --test tests/helper-community.test.cjs tests/helper-actions.test.cjs`
+passed 24/24 tests. New coverage includes omitted false with residual cursor/count,
+omitted terminal lists with required count, malformed flags/lists/counts,
+more-pages without data, unknown offsets after termination, out-of-order and
+equal-time translation competitors, multiple timestamps, and both 1,500 ms edges.
+Existing repeated-cursor, duplicate-id, request/time budgets, sanitized mutation
+errors, malformed-bracket deadline, UTF-8/line/word bounds remain passing.
+
+Remaining obligations: orchestrator commit and independent review, out-of-scope
+task/backlog status reconciliation, and the integration obligations above. Host
+and live-response validation remain separate; no real writes were tested.
