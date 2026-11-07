@@ -10,6 +10,7 @@ sign requests, perform their own network requests, or retry mutations.
 
 - `Community({api, now = Date.now})`: `lyrics({id})`,
   `comments({trackId, offset = 0})`, `postComment({trackId, text})`, `clear()`.
+  Live create responses expose `created_comment` as the new comment id string;
 - `parseLyrics(lyric)` and `mapComment(raw)` are pure mapping exports.
 - `Actions({api, invalidate, account?})`: `like({id,on})`,
   `savePlaylist({id,on})`, `saveAlbum({id,on})`, `createPlaylist({name})`,

@@ -72,7 +72,7 @@ rl.on('close',()=>process.exit(0));
 				t.Fatal(err)
 			}
 
-			if p.Info().Version != "0.4.2" {
+			if p.Info().Version != "0.4.3" {
 				t.Fatal("wrong plugin version")
 			}
 			routes := map[string]bool{}

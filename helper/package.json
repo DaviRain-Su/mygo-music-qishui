@@ -1,6 +1,6 @@
 {
   "name": "mygo-qishui-auth-helper",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "Isolated official-SDK authentication runtime for the MyGo Qishui plugin",
   "main": "main.cjs",

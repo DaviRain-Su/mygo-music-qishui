@@ -120,10 +120,15 @@ class Community {
     } finally {session.busy=false;}
   }
   async postComment({trackId,text:value}={}) {
-    id(trackId);text(value,5000);
-    return mutate(this.api,'/luna/pc/comments/create',{group_id:trackId,text:value,group_type:0},()=>this.sessions.delete(trackId),'comments',v=>{
-      const raw=v.comment||v.data?.comment||v.comments?.[0]||v.data||v;
-      return mapComment(raw);
+    id(trackId);const body=text(value,5000);
+    return mutate(this.api,'/luna/pc/comments/create',{group_id:trackId,text:body,group_type:0},()=>this.sessions.delete(trackId),'comments',v=>{
+      // Live PC create returns created_comment as the new id string, not a comment object.
+      if(typeof v.created_comment==='string' && /^[A-Za-z0-9_-]{1,256}$/.test(v.created_comment)) {
+        return {id:v.created_comment,author:'',text:body};
+      }
+      const raw=v.comment||v.data?.comment||v.comments?.[0]||v.data;
+      if(object(raw))return mapComment(raw);
+      throw error('mutation-unknown');
     });
   }
 }

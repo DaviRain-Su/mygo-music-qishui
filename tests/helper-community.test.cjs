@@ -38,11 +38,14 @@ test('missing fields and invalid pagination fail instead of fake empty page',asy
   await assert.rejects(bounded.comments({trackId:'t',offset:20}),{code:'pagination'});assert.equal(m,8);
 });
 test('post requires id, exact payload, sanitizes uncertain writes and clears pagination',async()=>{
-  for(const reply of [{},null,{comment:{id:''}}]) {
+  for(const reply of [{},null,{comment:{id:''}},{created_comment:''},{created_comment:123}]) {
     let n=0;const c=new Community({api:async(...args)=>{n++;assert.deepEqual(args,['/luna/pc/comments/create',{}, {group_id:'t',text:'hello',group_type:0}]);return reply;}});
     await assert.rejects(c.postComment({trackId:'t',text:'hello'}),{code:'mutation-unknown'});assert.equal(n,1);
   }
   const c=new Community({api:async()=>({comment:row('new')})});assert.equal((await c.postComment({trackId:'t',text:'hello'})).id,'new');
+  const live=new Community({api:async()=>({status_info:{status_code:0},created_comment:'7704645370416087844'})});
+  const created=await live.postComment({trackId:'t',text:'hello'});
+  assert.equal(created.id,'7704645370416087844');assert.equal(created.text,'hello');
   const bad=new Community({api:async()=>{throw Error('Cookie private');}});await assert.rejects(bad.postComment({trackId:'t',text:'hello'}),e=>e.code==='mutation-unknown'&&!e.message.includes('private'));
 });
 test('word/UTF8 bounds and invalid timing are enforced',()=>{
@@ -60,7 +63,7 @@ test('comments reject duplicate ids, obey elapsed budget and validate offset',as
 test('post invalidates cached pages on success and uncertainty',async()=>{
   for(const fail of [true,false]) {
     let reads=0;const c=new Community({api:async(path)=>{
-      if(path.endsWith('/create')) {if(fail)throw Error('timeout');return {comment:row('new')};}
+      if(path.endsWith('/create')) {if(fail)throw Error('timeout');return {created_comment:'new'};}
       reads++;return {comments:[row('c')],count:'1',has_more:false};
     }});
     await c.comments({trackId:'t'});
