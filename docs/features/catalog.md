@@ -28,14 +28,21 @@ verified account with a string `id`; `now` defaults to `Date.now`.
 
 Integration must call `clear()` on sign-out and `invalidate()` after attempted
 mutations, including uncertain outcomes. Every read checks the injected account;
-an ID change resets state. Reads are serialized. An explicit clear during a
-request makes its eventual response fail instead of repopulating state.
+an ID change resets state. Reads are serialized. `clear()` and `invalidate()`
+cancel all previously submitted reads, including queued reads and reads awaiting
+account resolution, with `account`. They cannot call the API or repopulate caches
+after cancellation. Reads submitted after the reset can proceed. Ordinary account
+changes reset caches within the serialized read without cancelling later reads.
 
 DTOs use MyGo field names. Track duration is preserved in milliseconds, covers
 are placed in album.imageUrl, and no playable IDs are synthesized. A missing
 album is represented by empty album ID/name, not a made-up navigable album.
 PC `entity.track`, `entity.track_wrapper.track` with base/display/related info,
 and direct entities are supported. Unsupported discover cards are skipped.
+Playlist details prefer the observed `media_resources[].entity.track_wrapper.track`
+shape on every page. Legacy `media` is accepted only when `media_resources` is
+absent; a present malformed field fails instead of falling back. This applies to
+`playlist`, `liked`, and `isLiked`.
 Feed lists accept the `media` shape and the existing repository `items` fixture.
 Missing required lists fail; unknown shapes are not recursively guessed.
 
@@ -66,7 +73,10 @@ Missing required lists fail; unknown shapes are not recursively guessed.
   deduplication IDs, and retains at most 16 sessions. Evicted sessions restart.
   The `played_media` feed context does not call the playback-history write API.
   A duplicate-only advance may return an empty batch after two pages, while home
-  retains its MorePage if the service has not explicitly ended the feed.
+  retains its MorePage if the service has not explicitly ended the feed. An empty
+  page with `has_more: true` raises `pagination` immediately and leaves the session
+  open; a later call continues with `is_first_request: false`. Explicit terminal
+  empty pages (or legacy empty pages without `has_more`) end the session.
 - IDs are 1–128 ASCII word/hyphen characters; queries max 512 characters;
   isLiked accepts at most 500 IDs; offsets must be nonnegative safe integers.
 
@@ -81,6 +91,10 @@ No album/artist detail, search suggestions, or unverified endpoints are exported
 No host exports/dispatcher are connected by this task. Login, entitlement checks,
 and playback are unchanged. Live endpoint validation and end-to-end host testing
 remain integration work; these tests provide offline contract evidence only.
+The sanitized feed-mode schema truncates scene entity internals: numeric scene
+IDs and scene request payloads remain unverified by that evidence. Synthetic tests
+do not establish those live contracts; integration must validate them before
+claiming scene support.
 
 ## Verification
 
@@ -91,8 +105,24 @@ regressions then failed before their implementation fixes. Fixtures are syntheti
 and based on the supplied sanitized structural results and existing local feed
 fixture. No account files, credentials, network, or server mutations were used.
 
-Delivery environment: both staging and committing were blocked because Git needs
-to create the shared `.git/worktrees/catalog-001/index.lock` outside the writable
-worktree. No permissions were changed. The required independent reviewer could
-not start due to a thread-store infrastructure error; independent review remains
-outstanding. Local contract review and the 28 offline tests completed.
+Delivery: the original implementation was committed as
+`df500f762327dec6b5bf08b9abe434698848fbd8` and independently reviewed in
+`docs/plan/reviews/catalog-001-01.md`. That review is **BLOCKED**; its status has
+not been changed by this repair. The three blocking findings now have local fixes:
+
+- Observed playlist list/wrapper mapping across continuation and terminal pages,
+  exercised through detail, liked, and membership reads; invalid preferred lists
+  cannot silently fall back.
+- Generation captured at submission and checked before/after account resolution;
+  both reset methods cancel queued and account-pending work before API access.
+- Contradictory empty feed continuation raises a pagination error without ending
+  the session, with subsequent continuation and terminal-empty coverage.
+
+The eight added regression tests failed before the fixes. Focused verification:
+**36/36 passed**, including all 28 existing tests; none removed or skipped.
+The stale delivery note is corrected here. Files are ready for orchestrator commit:
+`helper/catalog.cjs`, `tests/helper-catalog.test.cjs`, `docs/features/catalog.md`.
+No staging/commit was attempted during this repair, and no shared Git metadata was
+modified. Independent re-review of the fixes, public pagination-error serialization,
+host/dispatcher wiring, lifecycle invalidation, live schema validation (including
+scene modes), and end-to-end host/installer tests remain integration obligations.

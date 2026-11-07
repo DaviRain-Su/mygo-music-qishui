@@ -111,3 +111,43 @@ test('large feed pages deduplicate within a page even when the seen ring evicts 
  const rows=Array.from({length:1200},(_,i)=>media(String(i)));const c=make(async()=>({media:[...rows,...rows],has_more:false}));
  const out=await c.stationNext({id:'default'});assert.equal(out.length,1200);assert.equal(new Set(out.map(x=>x.id)).size,out.length);
 });
+
+const wrappedMedia = value => ({type:'track',entity:{track_wrapper:{track:{base_info:{id:value,name:'Wrapped',duration:123000},display_info:{cover_url:'https://img.test/wrapped'},related_info:{album_link:{id:'a',name:'Album'},artist_links:[{id:'r',name:'Artist'}]}}}}});
+test('observed playlist media_resources paginates wrappers for detail and complete likes',async()=>{
+ for(const read of [c=>c.playlist({id:'liked'}),c=>c.liked(),c=>c.isLiked({ids:['first','last','absent']})]){
+  const cursors=[];const c=make(async(path,q)=>{
+   if(path.endsWith('/user/playlist'))return {playlists:own};
+   assert.equal(path,'/luna/pc/playlist/detail');assert.equal(q.playlist_id,'liked');cursors.push(q.cursor);
+   return {playlist:own[0],media_resources:[wrappedMedia(q.cursor?'last':'first')],has_more:!q.cursor,next_cursor:'opaque-detail'};
+  });
+  const out=await read(c);assert.deepEqual(cursors,['','opaque-detail']);
+  if(out.tracks){assert.deepEqual(out.tracks.map(t=>t.id),['first','last']);assert.equal(out.tracks[0].duration,123000);assert.equal(out.tracks[0].album.imageUrl,'https://img.test/wrapped');}
+  else assert.deepEqual(out,{first:true,last:true,absent:false});
+ }
+});
+test('present invalid media_resources never falls back to legacy media',async()=>{
+ await assert.rejects(make(async()=>({playlist:own[0],media_resources:null,media:[],has_more:false})).playlist({id:'liked'}),{code:'response'});
+});
+for(const reset of ['clear','invalidate'])test(`${reset} cancels account-pending and already queued reads before API access`,async()=>{
+ let release,started;const entered=new Promise(resolve=>{started=resolve;});let accounts=0,calls=0;
+ const c=new Catalog({account:()=>{accounts++;if(accounts===1){started();return new Promise(resolve=>{release=resolve;});}return account();},api:async()=>{calls++;return {media:[media('new')],has_more:false};}});
+ const pending=c.home();await entered;const queued=c.home();
+ const rejected=Promise.all([assert.rejects(pending,{code:'account'}),assert.rejects(queued,{code:'account'})]);
+ c[reset]();release({id:'me'});await rejected;
+ assert.equal(accounts,1);assert.equal(calls,0);assert.equal(c.accountId,null);assert.equal(c.feeds.size,0);
+ assert.equal((await c.home()).sections[0].tracks[0].id,'new');assert.equal(calls,1);
+});
+for(const reset of ['clear','invalidate'])test(`${reset} cancels reads queued before execution starts`,async()=>{
+ let calls=0;const c=new Catalog({account:async()=>{calls++;return {id:'me'};},api:async()=>({media:[]})});
+ const pending=c.home();c[reset]();await assert.rejects(pending,{code:'account'});assert.equal(calls,0);
+});
+test('empty feed with explicit continuation errors without poisoning subsequent continuation',async()=>{
+ const bodies=[];const c=make(async(p,q,b)=>{bodies.push(b);return bodies.length===1?{media:[],has_more:true}:{media:[media('next')],has_more:false};});
+ await assert.rejects(c.home(),{code:'pagination'});assert.equal(bodies.length,1);assert.equal(c.feeds.get('default').done,false);
+ const out=await c.browse({page:'feed:default'});assert.equal(out.sections[0].tracks[0].id,'next');assert.equal(out.sections[0].morePage,undefined);assert.equal(bodies[1].is_first_request,false);
+});
+test('station empty continuation is bounded; explicit terminal empty feed ends normally',async()=>{
+ let calls=0;const c=make(async()=>{calls++;return {items:[],has_more:true};});
+ await assert.rejects(c.stationNext({id:'fresh'}),{code:'pagination'});assert.equal(calls,1);
+ const d=make(async()=>({items:[],has_more:false}));assert.deepEqual((await d.home()).sections,[{tracks:[]}]);
+});

@@ -49,12 +49,19 @@ class Catalog {
   if(typeof api!=='function'||typeof account!=='function'||typeof now!=='function') throw fault('protocol');
   this.api=api;this.account=account;this.now=now;this.generation=0;this.queue=Promise.resolve();this.clear();
  }
- clear() { this.generation++;this.accountId=null;this.searches=new Map();this.feeds=new Map();this.modes=null;this.likes=null; }
+ _reset() { this.accountId=null;this.searches=new Map();this.feeds=new Map();this.modes=null;this.likes=null; }
+ clear() { this.generation++;this._reset(); }
  invalidate(scope) { if(scope!==undefined && (typeof scope!=='string'||scope.length>128)) throw fault('protocol');this.clear(); }
  async _run(fn) {
+  // Capture at submission so resets also cancel operations still in the queue.
+  const generation=this.generation;
   const operation=this.queue.then(async()=>{
-   const a=await this.account();if(!a) {this.clear();throw fault('account');}id(a.id);
-   if(this.accountId!==a.id){this.clear();this.accountId=a.id;}
+   if(generation!==this.generation)throw fault('account');
+   const a=await this.account();
+   if(generation!==this.generation)throw fault('account');
+   if(!a) {this.clear();throw fault('account');}id(a.id);
+   // Serialized account changes reset caches without cancelling subsequent reads.
+   if(this.accountId!==a.id){this._reset();this.accountId=a.id;}
    const ctx={generation:this.generation,start:this.now()};return fn(ctx);
   });this.queue=operation.catch(()=>{});return operation;
  }
@@ -68,7 +75,7 @@ class Catalog {
  async _all(ctx,path,field,query={},mapper=x=>x,maxPages=50) {
   let cursor='';const cursors=new Set(['']);const out=[];let root;let rawCount=0;
   for(let page=0;page<maxPages;page++){
-   root=await this._api(ctx,path,{...query,cursor,count:100});const raw=list(root[field]);rawCount+=raw.length;if(rawCount>5000)throw pagination();out.push(...raw.map(mapper));
+   root=await this._api(ctx,path,{...query,cursor,count:100});const key=Array.isArray(field)?field.find(k=>Object.hasOwn(root,k)):field;const raw=list(root[key]);rawCount+=raw.length;if(rawCount>5000)throw pagination();out.push(...raw.map(mapper));
    const next=nextPage(root,raw.length,rawCount,cursors);if(next===null)return {items:out,root};if(rawCount>=5000)throw pagination();cursors.add(next);cursor=next;
   }throw pagination();
  }
@@ -97,7 +104,7 @@ class Catalog {
  }
  playlists() {return this._run(ctx=>this._playlists(ctx));}
  async _playlist(ctx,value) {
-  const {items,root}=await this._all(ctx,'playlist/detail','media',{playlist_id:value},mapTrack);
+  const {items,root}=await this._all(ctx,'playlist/detail',['media_resources','media'],{playlist_id:value},mapTrack);
   const meta=root.playlist??root.playlist_info;if(!meta)throw fault('response');const p=mapPlaylist(meta,this.accountId);if(p.id!==value)throw fault('response');return {...p,tracks:unique(items)};
  }
  playlist({id:value}={}) {return this._run(ctx=>this._playlist(ctx,id(value)));}
@@ -127,7 +134,9 @@ class Catalog {
    const body={is_first_request:s.pages===0,played_media:s.played.slice(-30),is_did_first_request:false,feed_counts:{mix_session_count:1}};
    if(value==='familiar'||value==='fresh')body.feed_preference={preference_mode:value};else if(value.startsWith('scene:'))body.feed_preference={scene_mode_id:Number(value.slice(6))};
    const root=await this._api(ctx,'feed/song-tab',{},body);const raw=list(Object.hasOwn(root,'media')?root.media:root.items);if(root.has_more!==undefined&&typeof root.has_more!=='boolean')throw fault('response');
-   const mapped=unique(raw.map(mapTrack));s.pages++;s.done=root.has_more===false||raw.length===0;
+   const mapped=unique(raw.map(mapTrack));s.pages++;
+   if(!raw.length&&root.has_more===true)throw pagination();
+   s.done=root.has_more===false||raw.length===0;
    for(const t of mapped)if(!s.seen.has(t.id)){tracks.push(t);s.seen.add(t.id);s.played.push({id:t.id,type:'track'});while(s.seen.size>1000)s.seen.delete(s.seen.values().next().value);}
    s.played=s.played.slice(-30);
   }return {tracks,more:!s.done};
