@@ -32,7 +32,19 @@ async function downloadAudio(address, signal, fetcher = fetch) {
 }
 async function transcode(input, output, bitRate, signal, format = 'mp3') {
   if (!['mp3', 'flac'].includes(format)) throw fault('audio');
-  if (format === 'flac') losslessAudio(await fs.readFile(input));
+  let expectedPCMBytes;
+  if (format === 'flac') {
+    const source = losslessAudio(await fs.readFile(input));
+    // STREAMINFO: 20-bit rate, 3-bit channels-1, 5-bit depth-1,
+    // 36-bit total samples. Keep the original count: remuxing may rewrite it.
+    const info = source.readBigUInt64BE(18);
+    const samples = Number(info & ((1n << 36n) - 1n));
+    const channels = Number((info >> 41n) & 7n) + 1;
+    expectedPCMBytes = samples * channels * 4;
+    // Unknown length cannot establish completeness. Bound decoded work as well
+    // as compressed size; PCM is streamed and discarded, never written to disk.
+    if (!samples || expectedPCMBytes > 512 * 1024 * 1024) throw fault('ffmpeg');
+  }
   const commands = process.platform === 'darwin' ? ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', 'ffmpeg'] : ['ffmpeg'];
   for (const command of commands) {
     if (signal.aborted) throw fault('timeout');
@@ -48,9 +60,36 @@ async function transcode(input, output, bitRate, signal, format = 'mp3') {
     if (signal.aborted) throw fault('timeout');
     if (result.missing) continue;
     if (result.code !== 0) throw fault('ffmpeg');
+    if (format === 'flac') await verifyFlac(command, output, expectedPCMBytes, signal);
     return;
   }
   throw fault('ffmpeg');
+}
+async function verifyFlac(command, file, expectedBytes, signal) {
+  if (signal.aborted) throw fault('timeout');
+  const valid = await new Promise(resolve => {
+    let bytes = 0, overflow = false;
+    const proc = spawn(command, [
+      '-nostdin', '-hide_banner', '-loglevel', 'error', '-xerror',
+      '-err_detect', 'crccheck+explode', '-protocol_whitelist', 'file,pipe',
+      '-i', file, '-map', '0:a:0', '-vn', '-c:a', 'pcm_s32le', '-f', 's32le', 'pipe:1',
+    ], { stdio: ['ignore', 'pipe', 'ignore'], shell: false });
+    const kill = () => proc.kill('SIGKILL');
+    signal.addEventListener('abort', kill, { once: true });
+    if (signal.aborted) kill();
+    proc.stdout.on('data', chunk => {
+      bytes += chunk.length;
+      if (bytes > expectedBytes) { overflow = true; kill(); }
+    });
+    proc.once('error', () => { signal.removeEventListener('abort', kill); resolve(false); });
+    // close waits for stdout to drain, unlike exit.
+    proc.once('close', code => {
+      signal.removeEventListener('abort', kill);
+      resolve(code === 0 && !overflow && bytes === expectedBytes);
+    });
+  });
+  if (signal.aborted) throw fault('timeout');
+  if (!valid) throw fault('ffmpeg');
 }
 class Playback {
   constructor({ dataDir, api, fetcher = fetch, encoder = transcode }) {

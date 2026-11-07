@@ -109,3 +109,43 @@ test('aborted encoder and invalid lossless output clean partial files', { timeou
   const controller = new AbortController(); controller.abort();
   await assert.rejects(transcode('unused', 'unused', 128, controller.signal), { code: 'timeout' });
 });
+
+test('real corrupt or truncated FLAC is rejected before caching and all partial files are removed', { timeout: 15000 }, async t => {
+  const { spawnSync } = require('node:child_process');
+  const root = await sandbox(t), source = path.join(root, 'complete.flac');
+  const generated = spawnSync('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+    'sine=frequency=440:duration=2', '-c:a', 'flac', source], { timeout: 4000 });
+  assert.equal(generated.status, 0);
+  const raw = await fs.readFile(source);
+  // A mid-frame cut produces decoder errors. A complete-frame prefix can decode
+  // successfully, but must still fail the original STREAMINFO sample count.
+  const frames = [];
+  for (let i = 42; i < raw.length - 1; i++) if (raw[i] === 255 && (raw[i + 1] & 254) === 248) frames.push(i);
+  assert.ok(frames.length > 3);
+  const corrupt = Buffer.from(raw);
+  corrupt.fill(0, Math.floor(raw.length * 0.65), Math.floor(raw.length * 0.65) + 128);
+  for (const damaged of [raw.subarray(0, Math.floor(raw.length * 0.65)), raw.subarray(0, frames[frames.length - 2]), corrupt]) {
+    const p = fixture(); p.track_player.video_model = JSON.parse(p.track_player.video_model);
+    p.track_player.video_model.video_list[0].video_meta.codec_type = 'flac';
+    const playback = new Playback({ dataDir: root, api: async name => name.endsWith('/me') ? {} : p,
+      fetcher: async () => new Response(damaged) });
+    t.after(() => playback.close());
+    await assert.rejects(playback.prepare({ id: 'truncated', quality: 'lossless' }), { code: 'ffmpeg' });
+    assert.equal(playback.cache.size, 0);
+    assert.equal(playback.pending.size, 0);
+    assert.deepEqual(await fs.readdir(await playback.init()), []);
+    await playback.close();
+  }
+});
+
+
+test('FLAC verification rejects unknown sample counts and excessive decoded size', async t => {
+  const root = await sandbox(t), input = path.join(root, 'bounded.flac'), output = path.join(root, 'out.flac');
+  for (const samples of [0n, (1n << 36n) - 1n]) {
+    const raw = Buffer.concat([Buffer.from('fLaC'), Buffer.from([128, 0, 0, 34]), Buffer.alloc(34), Buffer.alloc(2048)]);
+    raw.writeBigUInt64BE((44100n << 44n) | (15n << 36n) | samples, 18);
+    await fs.writeFile(input, raw);
+    await assert.rejects(transcode(input, output, 192, new AbortController().signal, 'flac'), { code: 'ffmpeg' });
+    await assert.rejects(fs.access(output));
+  }
+});
