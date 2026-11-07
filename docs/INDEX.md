@@ -1,6 +1,7 @@
 # 项目文档索引
 
 - [功能对齐规格与证据](features/README.md)：本轮需求、宿主边界、已确认接口、模块合同与验证门槛。
+- [能力验收矩阵](features/acceptance.md)：已兑现 / blocked / 需用户确认。
 - [交付任务](plan/README.md)：并行模块、集成、审查和验收状态。
 - [认证辅助程序](auth-sdk/03-technical-spec.md)
 - [安装布局](auth-sdk/04-installation-fix.md)

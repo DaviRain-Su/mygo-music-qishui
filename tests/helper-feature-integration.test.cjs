@@ -26,6 +26,9 @@ function transport(log) {
    case 'comments': return {comments:[{id:'c1',content:'Hello',time_created:2}],count:'1',has_more:false};
    case 'comments/create': return {created_comment:'c2'};
    case 'me/playlist': return {playlist:{id:'new1'}};
+   case 'me/playlist/update': return {playlist_id:b.playlist_id,name:b.name,playlist:{id:b.playlist_id}};
+   case 'me/playlist/delete': return {deleted_playlists:b.playlist_ids||[]};
+   case 'me/playlist/media/delete': return {media:[],playlist:{id:b.playlist_id}};
    default: if (/^\/luna\/pc\/me\/(collection\/(media|album|playlist)|playlist\/media\/append)$/.test(path)) return {};
     throw Error('Unexpected transport path '+path);
   }
@@ -36,7 +39,7 @@ async function bridge(t, api) {
  const storage = new Map([['cookie','sessionid=synthetic'],['account',{id:'u1',name:'User'}],['authBackend','sdk-v1']]);
  const requests=[],timers=[],readers=[],lines=[];let closed=false;
  const proc={write(line){const r=parseRequest(line);requests.push(r);Promise.resolve().then(async()=>{
-  try {const result=r.op==='hello'?{protocol:1,version:'0.4.4'}:r.op==='catalog'?await service.dispatch(r.params):null;emit({id:r.id,ok:true,result});}
+  try {const result=r.op==='hello'?{protocol:1,version:'0.4.5'}:r.op==='catalog'?await service.dispatch(r.params):null;emit({id:r.id,ok:true,result});}
   catch(e){emit({id:r.id,ok:false,error:publicError(e)});}
  });},readLine(){return lines.length?Promise.resolve(lines.shift()):closed?Promise.resolve(null):new Promise(r=>readers.push(r));},kill(){closed=true;for(const r of readers.splice(0))r(null);}};
  function emit(v){const line=encodeResponse(v);readers.length?readers.shift()(line):lines.push(line);}
@@ -58,9 +61,11 @@ test('all feature exports traverse JSONL and real modules with only API transpor
  assert.equal(posted.id,'c2');assert.equal(posted.text,'Test');assert.equal(posted.author,'User');assert.equal(posted.avatarUrl,'https://img.test/me.jpg');
  for(const name of ['like','savePlaylist','saveAlbum'])await p[name]({id:'t1',on:true});
  assert.equal((await p.createPlaylist({name:'New'})).mine,true);
- assert.equal((await p.addToPlaylist({id:'p1',trackIds:['t1','t2']})).confirmed,2);await p.played({id:'t1'});
- assert.equal(requests.filter(r=>r.op==='catalog').length,26);assert.ok(timers.includes(28000));
- for(const name of ['suggest','album','artist','followArtist','deletePlaylist','renamePlaylist','removeFromPlaylist','movePlaylistTrack','likeComment','shows','remotePlay'])assert.equal(p[name],undefined);
+ assert.equal((await p.addToPlaylist({id:'p1',trackIds:['t1','t2']})).confirmed,2);
+ assert.equal((await p.removeFromPlaylist({id:'p1',trackIds:['t2']})).confirmed,1);
+ await p.renamePlaylist({id:'p1',name:'Renamed'}); await p.deletePlaylist({id:'p1'}); await p.played({id:'t1'});
+ assert.equal(requests.filter(r=>r.op==='catalog').length,29);assert.ok(timers.includes(28000));
+ for(const name of ['suggest','album','artist','followArtist','movePlaylistTrack','likeComment','shows','remotePlay'])assert.equal(p[name],undefined);
  assert.deepEqual(log.filter(x=>x.path.endsWith('/append')).map(x=>x.b.media[0].id),['t1','t2']);
 });
 test('fixed dispatch rejects malicious/internal names before account or transport',async()=>{

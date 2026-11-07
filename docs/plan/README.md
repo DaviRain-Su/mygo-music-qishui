@@ -14,8 +14,9 @@
 | integration-001 | helper路由、全部可兑现exports、导航、缓存失效、安装包/文档 | done（0.4.0，159项Node+独立复审+只读线上验收） | catalog/community/quality |
 | covers-001 | 封面/电台图标 CDN 模板后缀 | done（直播探测+聚焦测试） | catalog-001 |
 | covers-001 | 封面/电台图标 CDN 模板后缀 | done（直播探测+聚焦测试） | catalog-001 |
-| acceptance-001 | 独立验证、只读线上验收、已支持与blocked清单 | in-progress | integration-001 |
+| acceptance-001 | 独立验证、只读线上验收、已支持与blocked清单 | done（见 features/acceptance.md，随 0.4.5 关闭） | integration-001 |
 | polish-001 | 写响应合同、评论作者回填、播放缓存 8/30min | done（0.4.4，162项Node+自审记录） | community-001, quality-001, integration-001 |
+| playlist-writes-001 | 歌单重命名/删除/移曲 + acceptance 收口 | done（0.4.5） | polish-001 |
 
 三个模块路径互不重叠，分别使用 git worktree；实现提交后由全新verify agent审查，blocking修复后才合并。集成单独任务，必须测试真实模块而不是只mock JSONL返回。
 
@@ -25,7 +26,7 @@
 
 ## 不纳入“已完成”的项目
 
-- 无可靠PC路由证据的歌单重命名/删除/移除/重排、艺人关注、评论点赞、建议、专辑/艺人完整详情。
+- 无可靠PC路由证据的歌单重排、艺人关注、评论点赞、建议、专辑/艺人完整详情。
 - 官方支付、直播视频、完整社交/隐私、专有DSP、独立Hi-Res档位：需要宿主扩展或额外授权接口。
 - 线上账号写操作仅在用户主动使用时执行；离线契约测试通过不等于真实写操作已经验证。
 

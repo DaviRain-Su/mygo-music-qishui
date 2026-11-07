@@ -10,6 +10,8 @@ test('exact supported action payloads and invalidation', async () => {
     await a.like({id:'t',on}); await a.savePlaylist({id:'p',on}); await a.saveAlbum({id:'a',on});
   }
   await a.played({id:'t'});
+  await a.renamePlaylist({id:'p',name:'Renamed'});
+  await a.deletePlaylist({id:'p'});
   assert.deepEqual(calls, [
     ['/luna/pc/me/collection/media',{}, {media:[{type:'track',id:'t'}],scene:''}],
     ['/luna/pc/me/collection/playlist',{}, {playlist_ids:['p']}],
@@ -18,8 +20,10 @@ test('exact supported action payloads and invalidation', async () => {
     ['/luna/pc/me/collection/playlist/delete',{}, {playlist_ids:['p']}],
     ['/luna/pc/me/collection/album/delete',{}, {album_ids:['a']}],
     ['/luna/pc/me/recently-played-media',{}, {media:[{type:'track',id:'t'}]}],
+    ['/luna/pc/me/playlist/update',{}, {playlist_id:'p',name:'Renamed'}],
+    ['/luna/pc/me/playlist/delete',{}, {playlist_ids:['p']}],
   ]);
-  assert.deepEqual(scopes,['liked','playlists','savedAlbums','liked','playlists','savedAlbums','recent']);
+  assert.deepEqual(scopes,['liked','playlists','savedAlbums','liked','playlists','savedAlbums','recent','playlists','playlists']);
 });
 test('create requires real id; validates responses and never retries', async () => {
   for (const reply of [null, [], {}, {playlist:{id:''}}]) {
@@ -36,6 +40,20 @@ test('append partial success is bounded, sanitized and stops on uncertain result
   const a=new Actions({api:async (...args)=>{n++;assert.deepEqual(args,['/luna/pc/me/playlist/media/append',{}, {playlist_id:'p',media:[{id:['x','y'][n-1],type:'track'}]}]);if(n===2)throw new Error('Cookie secret URL');return {};},invalidate:()=>invalid++});
   await assert.rejects(a.addToPlaylist({playlistId:'p',ids:['x','y','z']}),e=> e.code==='mutation-unknown' && e.confirmed===1 && !/secret|Cookie|URL/.test(e.message));
   assert.equal(n,2); assert.equal(invalid,2);
+});
+test('removeFromPlaylist mirrors append payload and partial confirmed semantics', async () => {
+  let n=0, invalid=0;
+  const a=new Actions({api:async (...args)=>{n++;assert.deepEqual(args,['/luna/pc/me/playlist/media/delete',{}, {playlist_id:'p',media:[{id:['x','y'][n-1],type:'track'}]}]);if(n===2)throw new Error('Cookie secret URL');return {media:[],playlist:{id:'p'}};},invalidate:()=>invalid++});
+  await assert.rejects(a.removeFromPlaylist({playlistId:'p',ids:['x','y','z']}),e=> e.code==='mutation-unknown' && e.confirmed===1 && !/secret|Cookie|URL/.test(e.message));
+  assert.equal(n,2); assert.equal(invalid,2);
+  const ok=new Actions({api:async()=>({}),invalidate:()=>{}});
+  assert.deepEqual(await ok.removeFromPlaylist({playlistId:'p',ids:['a','b']}),{confirmed:2});
+});
+test('rename rejects mismatched playlist_id echoes', async () => {
+  const bad=new Actions({api:async()=>({playlist_id:'other',name:'x'}),invalidate:()=>{}});
+  await assert.rejects(bad.renamePlaylist({id:'p',name:'x'}),{code:'mutation-unknown'});
+  const good=new Actions({api:async(...args)=>{assert.deepEqual(args,['/luna/pc/me/playlist/update',{},{playlist_id:'p',name:'x'}]);return {playlist_id:'p',name:'x',playlist:{id:'p'}};},invalidate:()=>{}});
+  assert.deepEqual(await good.renamePlaylist({id:'p',name:'x'}),{ok:true});
 });
 test('invalid inputs cause zero requests; successful append reports confirmed count',async()=>{
   let n=0;const a=new Actions({api:async()=>{n++;return {};},invalidate:()=>{}});

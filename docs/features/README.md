@@ -1,10 +1,10 @@
 # 汽水功能对齐：0.4 设计合同
 
-当前可安装集成版本：**0.4.4**（评论作者回填；播放缓存加长；写操作成功形态合同固化）。
+当前可安装集成版本：**0.4.5**（歌单重命名/删除/移曲；评论作者回填；播放缓存加长）。
 - MyGo 首页会把「第一节 tracks」做成大卡片，后面如果没有歌单/电台/榜单 section，页面就会只剩一块很空。home 需组合：每日推荐 tracks + 情景电台 + 精选歌单 + 热歌榜 + 探索 links。
 - `/feed/mode` 的 `url_info` 是官方情景 **logo/PNG 图标**，不是专辑图；电台卡片应再请求一页 `feed/song-tab` 取首曲 `album.imageUrl`（不写入播放用 feed 会话）。
 只读线上验收已覆盖首页、发现、榜单、电台、搜索翻页、喜欢/历史/收藏专辑、歌词与评论翻页。
-仍 blocked：专辑/艺人完整详情、suggest、关注艺人、歌单重命名/删除/移除/重排、评论点赞、Hi-Res/空间音频。
+仍 blocked：专辑/艺人完整详情、suggest、关注艺人、歌单重排、评论点赞、Hi-Res/空间音频。
 写操作仅有离线契约验证，需用户主动触发后再确认；桌面出声与授权无损亦需本地确认。
 
 ## 需求依据 / Phase 0–2
@@ -48,7 +48,10 @@ Playback helper (independent): true source FLAC → lossless FLAC; AAC → MP3
 - savePlaylist on/off：POST `/luna/pc/me/collection/playlist` 或 `/playlist/delete`，`{playlist_ids:[id]}`。成功分别见 `playlist_ids` / `deleted_playlists`。
 - saveAlbum on/off：POST `/luna/pc/me/collection/album` 或 `/album/delete`，`{album_ids:[id]}`。
 - createPlaylist：POST `/luna/pc/me/playlist`，`{name}`；成功 `{status_info, playlist:{id,...}}`，必须取真实 `playlist.id`，不得虚构。
+- renamePlaylist：POST `/luna/pc/me/playlist/update`，`{playlist_id,name}`；成功可见 `playlist_id`/`name`/`playlist`。不得改用歧义的 POST `/me/playlist` 带 id。
+- deletePlaylist：POST `/luna/pc/me/playlist/delete`，`{playlist_ids:[id]}`；成功可见 `deleted_playlists`。单 id 字段形态实测 1000004，不使用。
 - addToPlaylist：POST `/luna/pc/me/playlist/media/append`，`{playlist_id,media:[{id,type:'track'}]}`；成功可含 `status_code:0`、`media`、`playlist`。多曲逐曲且禁止盲目重试；非 JSON/网络失败报告部分完成/结果未知。
+- removeFromPlaylist：POST `/luna/pc/me/playlist/media/delete`，同 append 的 media 形态；多曲逐曲、部分完成语义同 add。`/me/playlist/delete` 带 media 不能当移曲用。
 - played：POST `/luna/pc/me/recently-played-media`，`{media:[{type:'track',id}]}`；只能由 MyGo 真正的 played 回调触发，不在 stream/预加载触发。
 - postComment：POST `/luna/pc/comments/create`，`{group_id,text,group_type:0}`。实测成功响应是 `{status_info, created_comment:<id字符串>}`，不是完整 comment 对象；必须用 `created_comment` 作为 Comment.id，正文回填本次提交的 text；缺 author/avatar 时由集成层用当前账号昵称/头像回填以便 MyGo 立即展示。缺 id 明确报错且不自动重发。
 
@@ -56,11 +59,11 @@ Playback helper (independent): true source FLAC → lossless FLAC; AAC → MP3
 
 ### 当前不具备可靠 PC HTTP 路径的功能
 
-官方 UI 中可见：GetAlbumDetail、GetArtistDetail、ListArtistAlbums/Tracks、Sug、UpdatePlaylistInfo、MDeletePlaylists、DeletePlaylistMedia、CommentAction、CollectType.artist/user。但函数名不等于 URL。
+官方 UI 中可见：GetAlbumDetail、GetArtistDetail、ListArtistAlbums/Tracks、Sug、CommentAction、CollectType.artist/user、歌单重排。函数名不等于 URL。
 
-本轮只读试验中 `/luna/pc/album/detail`, `/artist/detail`, `/artist/tracks`, `/artist/albums`, `/album`, `/artist`（及去掉pc/加末尾斜线的有限变体）均404；`/search/sug`、`/search/suggest` GET 返回1000004，不能称建议功能可用。不得把这些猜测路径做成产品功能，不得猜 destructive POST 来试验。
+已用真实会话确认：`/luna/pc/album/detail`、`/artist/detail` 仍 404；`/search/sug`、`/search/suggest` GET 仍 1000004；`/me/playlist/media/reorder` 404。不得把这些猜测路径做成产品功能。
 
-因此专辑/艺人完整详情、关注艺人、歌单重命名/删除/移除/重排、评论点赞、搜索建议保留明确 blocked 状态，不能用搜索部分结果冒充完整详情。分类搜索仍可展示真实卡片，不导出无法兑现的详情操作。
+因此专辑/艺人完整详情、关注艺人、歌单重排、评论点赞、搜索建议保留明确 blocked 状态，不能用搜索部分结果冒充完整详情。分类搜索仍可展示真实卡片，不导出无法兑现的详情操作。歌单重命名/删除/移曲已有可信 PC 映射，纳入 Actions。
 
 ## Catalog 模块合同
 

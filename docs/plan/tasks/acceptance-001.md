@@ -1,7 +1,7 @@
 ---
 id: acceptance-001
 scope: independent-verification-and-supported-blocked-matrix
-status: in-progress
+status: done
 depends-on: [integration-001]
 ---
 
@@ -24,5 +24,6 @@ depends-on: [integration-001]
 
 ## deliverables
 
-- docs/features/README.md 或独立 supported/blocked 清单更新
+- docs/features/acceptance.md（0.4.5 矩阵）
+- docs/features/README.md / backlog 与矩阵一致
 - 不宣称原生 App 完整对齐；不发布未经用户确认的 Release 说明夸大词

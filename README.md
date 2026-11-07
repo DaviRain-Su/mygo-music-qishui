@@ -2,7 +2,7 @@
 
 实验性的汽水音乐音源，适用于 [MyGo Music](https://github.com/egoist/mygo-music) 0.1.7+。
 
-## 0.4.4：评论展示与播放缓存（基于 0.4.0 功能接入）
+## 0.4.5：歌单编辑补齐（基于 0.4.0 功能接入）
 
 真实 Catalog / Community / Actions 已接入 MyGo exports → JSONL `catalog`
 → `helper/features.cjs` → Runtime API。没有实现官方原生 App 的全部页面。
@@ -11,18 +11,18 @@
 | --- | --- |
 | 曲库与导航 | 首页、发现、榜单、历史、电台、喜欢、收藏专辑、歌单；四类搜索和受限游标分页 |
 | 社区 | 普通/逐字歌词、翻译、评论分页、主动发布评论（成功后回填当前账号昵称/头像） |
-| 动作 | 喜欢、收藏歌单/专辑、创建歌单、逐曲追加；历史仅由宿主 played 回调上报 |
+| 动作 | 喜欢、收藏歌单/专辑、创建/重命名/删除歌单、逐曲追加与移出；历史仅由宿主 played 回调上报 |
 | 播放 | standard/high 的 AAC→128/192 kbps MP3；有明确权益与格式证据的 FLAC→FLAC；内存缓存 8 条 / 30 分钟 |
-| 暂不提供 | 专辑/艺人完整详情、关注艺人、歌单重命名/删除/移除/重排、评论点赞、搜索建议、shows/remote、Hi-Res/空间音频 |
+| 暂不提供 | 专辑/艺人完整详情、关注艺人、歌单重排、评论点赞、搜索建议、shows/remote、Hi-Res/空间音频 |
 
 功能请求共用 25 秒预算（包括账号校验、排队和所有分页），桥接等待 28 秒。
 登录、登出、取消和账号变化清理缓存并阻止旧账号读取返回。写入不会自动重试；
 `mutation-unknown` 表示可能已经执行，需核对状态。批量追加显示已确认项数；
 若辅助进程断开，未收到的计数不能推断为零。
 
-0.4.1–0.4.3 已覆盖封面 CDN、首页多板块、电台首曲封面、评论发送响应解析；
-0.4.4 补齐评论作者展示、播放缓存与写操作成功形态合同。当前仍需你本地确认桌面出声与主动写操作。
-详见 [功能合同](docs/features/README.md) 与 [交付计划](docs/plan/README.md)。
+0.4.1–0.4.4 已覆盖封面 CDN、首页多板块、电台首曲封面、评论发送/作者回填、播放缓存；
+0.4.5 补齐歌单重命名、删除与移曲。当前仍需你本地确认桌面出声与主动写操作。
+详见 [功能合同](docs/features/README.md)、[验收矩阵](docs/features/acceptance.md) 与 [交付计划](docs/plan/README.md)。
 
 ## 0.2.1 保留的安装修复
 
@@ -44,7 +44,7 @@
 
 ## 安装
 
-1. 先按下文生成代码包，再在 MyGo → Settings → Plugins → **+** 导入 `plugin-qishui-0.4.4.zip`。本轮未改动已安装插件。
+1. 先按下文生成代码包，再在 MyGo → Settings → Plugins → **+** 导入 `plugin-qishui-0.4.5.zip`。本轮未改动已安装插件。
 2. 安装 **Node.js 22.12+ 和 npm**。播放转换另需 ffmpeg；macOS 可使用 `brew install node ffmpeg`。
 3. 在插件目录执行一次：
 
@@ -62,7 +62,7 @@
    首次认证从官方 CDN 下载固定版本安全 SDK，校验 SHA-256 后缓存。**没有在仓库中分发官方 SDK 或原生二进制。**
 
 4. 在插件设置中允许启动程序（**Node.js → Electron**，播放另用 ffmpeg）。
-5. 手动更新代码后，**⌘Q 完全退出 MyGo 再打开**。登录提示应显示 `[汽水 0.4.4 SDK]`。
+5. 手动更新代码后，**⌘Q 完全退出 MyGo 再打开**。登录提示应显示 `[汽水 0.4.5 SDK]`。
 
 当前仅验证 macOS arm64。读取曲库使用本机 `/Applications/汽水音乐.app/Contents/Resources/app.asar.unpacked/bdms.node` 官方原生 SDK；需要安装官方汽水客户端，但**不读取它已有的 Cookie、账号数据库或浏览器 profile**。其他平台、不同原生 SDK 版本仍需适配。
 
@@ -106,7 +106,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_package.
 
 ```sh
 python3 scripts/package.py
-# 输出 .dist/plugin-qishui-0.4.4.zip
+# 输出 .dist/plugin-qishui-0.4.5.zip
 ```
 
 单独验证 SDK 是否能启动并生成安全参数（不会输出二维码 token、Cookie 或账号信息）：
@@ -132,7 +132,7 @@ QISHUI_PLUGIN_SOURCE="$PWD/index.js" go -C "$MYGO_SOURCE" test ./internal/plugin
 
 ```sh
 cp tests/mygo-install-regression_test.go "$MYGO_SOURCE/internal/plugin/qishui_install_test.go"
-QISHUI_PLUGIN_DIR="$PWD" QISHUI_PLUGIN_ZIP="$PWD/.dist/plugin-qishui-0.4.4.zip" \
+QISHUI_PLUGIN_DIR="$PWD" QISHUI_PLUGIN_ZIP="$PWD/.dist/plugin-qishui-0.4.5.zip" \
   go -C "$MYGO_SOURCE" test ./internal/plugin -run TestQishuiInstallArtifacts -count=1 -v
 ```
 

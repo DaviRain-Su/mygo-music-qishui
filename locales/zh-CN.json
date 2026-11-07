@@ -8,5 +8,18 @@
   "Qishui plays through ffmpeg: install it with Homebrew, or so that it's on the PATH": "汽水音乐播放需要 ffmpeg：请安装后重试",
   "the audio didn't start in time": "音频加载超时",
   "Home": "首页",
-  "Recommended for you": "为你推荐"
+  "Recommended for you": "为你推荐",
+  "Discover": "发现",
+  "Charts": "榜单",
+  "Stations": "情景电台",
+  "Music without end": "不停播放",
+  "Couldn't load the stations": "无法加载情景电台",
+  "Couldn't post your comment. Try again later.": "评论发送失败，请稍后再试",
+  "Couldn't load the comments": "无法加载评论",
+  "Write a comment…": "写一条评论…",
+  "Post": "发送",
+  "No comments yet": "还没有评论",
+  "That's all the comments": "没有更多评论了",
+  "Couldn't play this song": "这首歌暂时无法播放",
+  "That didn't work. Try again later.": "操作失败，请稍后再试"
 }

@@ -72,7 +72,7 @@ rl.on('close',()=>process.exit(0));
 				t.Fatal(err)
 			}
 
-			if p.Info().Version != "0.4.4" {
+			if p.Info().Version != "0.4.5" {
 				t.Fatal("wrong plugin version")
 			}
 			routes := map[string]bool{}
@@ -128,12 +128,12 @@ rl.on('close',()=>process.exit(0));
 						t.Fatalf("SDK catalog: %+v, %v", found, err)
 					}
 
-					for _, name := range []string{"home", "browse", "search", "playlists", "playlist", "liked", "isLiked", "savedAlbums", "recent", "stations", "stationNext", "lyrics", "comments", "postComment", "like", "savePlaylist", "saveAlbum", "createPlaylist", "addToPlaylist", "played"} {
+					for _, name := range []string{"home", "browse", "search", "playlists", "playlist", "liked", "isLiked", "savedAlbums", "recent", "stations", "stationNext", "lyrics", "comments", "postComment", "like", "savePlaylist", "saveAlbum", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "played"} {
 						if !p.Can(name) {
 							t.Fatalf("missing export %s", name)
 						}
 					}
-					for _, name := range []string{"album", "artist", "suggest", "followArtist", "deletePlaylist", "renamePlaylist", "removeFromPlaylist", "movePlaylistTrack", "likeComment", "shows", "remotePlay"} {
+					for _, name := range []string{"album", "artist", "suggest", "followArtist", "movePlaylistTrack", "likeComment", "shows", "remotePlay"} {
 						if p.Can(name) {
 							t.Fatalf("blocked export %s", name)
 						}

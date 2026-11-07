@@ -5,7 +5,7 @@ const { Community } = require('./community.cjs');
 const { Actions } = require('./actions.cjs');
 const { fault } = require('./protocol.cjs');
 const featureContext = new AsyncLocalStorage();
-const WRITES = new Set(['postComment','like','savePlaylist','saveAlbum','createPlaylist','addToPlaylist','played']);
+const WRITES = new Set(['postComment','like','savePlaylist','saveAlbum','createPlaylist','renamePlaylist','deletePlaylist','addToPlaylist','removeFromPlaylist','played']);
 // Explicit closures, never dispatch through a client-supplied property name.
 const METHODS = new Map([
  ['home',(s,a)=>s.catalog.home(a)], ['browse',(s,a)=>s.catalog.browse(a)],
@@ -26,7 +26,9 @@ const METHODS = new Map([
  }],
  ['like',(s,a)=>s.actions.like(a)], ['savePlaylist',(s,a)=>s.actions.savePlaylist(a)],
  ['saveAlbum',(s,a)=>s.actions.saveAlbum(a)], ['createPlaylist',async(s,a)=>({...await s.actions.createPlaylist(a),mine:true})],
- ['addToPlaylist',(s,a)=>s.actions.addToPlaylist(a)], ['played',(s,a)=>s.actions.played(a)],
+ ['renamePlaylist',(s,a)=>s.actions.renamePlaylist(a)], ['deletePlaylist',(s,a)=>s.actions.deletePlaylist(a)],
+ ['addToPlaylist',(s,a)=>s.actions.addToPlaylist(a)], ['removeFromPlaylist',(s,a)=>s.actions.removeFromPlaylist(a)],
+ ['played',(s,a)=>s.actions.played(a)],
 ]);
 function check(ctx) { if (ctx.signal.aborted) throw ctx.signal.reason; }
 // Check before starting work and after settlement, even if the transport ignores abort.

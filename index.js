@@ -1,6 +1,6 @@
 // MyGo Qishui: official browser SDK authentication runs in a private helper.
 // No unsigned-fetch fallback, no default/placeholder successful account.
-const VERSION = "0.4.4";
+const VERSION = "0.4.5";
 const cookie = () => host.storage.get("authBackend") === "sdk-v1" ? host.storage.get("cookie") || "" : "";
 function fail(code, message) { const error = new Error(message); error.code = code; return error; }
 function needAccount() { if (!account()) throw fail("signIn", "请先使用官方 SDK 登录汽水音乐。"); }
@@ -88,7 +88,7 @@ function send(client, op, params = {}, timeout = 40000, onPrompt) {
     if (client.closed) { reject(fail("qishui-helper", "汽水 SDK 辅助程序已停止。")); return; }
     const id = ++client.nextId;
     const timer = setTimeout(() => stopHelper(client, fail("qishui-timeout", "汽水 SDK 辅助程序等待超时，已停止本次操作。")), timeout);
-    client.pending.set(id, { resolve, reject, timer, onPrompt, mutation: op === "catalog" && ["postComment","like","savePlaylist","saveAlbum","createPlaylist","addToPlaylist","played"].includes(params.method) });
+    client.pending.set(id, { resolve, reject, timer, onPrompt, mutation: op === "catalog" && ["postComment","like","savePlaylist","saveAlbum","createPlaylist","renamePlaylist","deletePlaylist","addToPlaylist","removeFromPlaylist","played"].includes(params.method) });
     try { client.process.write(JSON.stringify({ id, op, params }) + "\n"); }
     catch { stopHelper(client, fail("qishui-helper", "无法向汽水 SDK 辅助程序发送请求。")); }
   });
@@ -180,9 +180,14 @@ export function like(args) { return catalog("like", args); }
 export function savePlaylist(args) { return catalog("savePlaylist", args); }
 export function saveAlbum(args) { return catalog("saveAlbum", args); }
 export function createPlaylist(args) { return catalog("createPlaylist", args); }
+export function renamePlaylist(args) { return catalog("renamePlaylist", args); }
+export function deletePlaylist(args) { return catalog("deletePlaylist", args); }
 export function played(args) { return catalog("played", args); }
 export function addToPlaylist({id, trackIds}) {
   return catalog("addToPlaylist", {playlistId:id, ids:trackIds});
+}
+export function removeFromPlaylist({id, trackIds}) {
+  return catalog("removeFromPlaylist", {playlistId:id, ids:trackIds});
 }
 
 // ---------- Playback: the helper resolves rights, decrypts authorized audio and prepares MP3/FLAC ----------
