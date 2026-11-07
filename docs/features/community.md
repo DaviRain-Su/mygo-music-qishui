@@ -60,13 +60,21 @@ Lyrics use the existing POST `/luna/pc/track_v2` metadata payload, with no playb
 or entitlement side effects. Ordinary LRC/plain text and Chinese translation are
 returned verbatim as strings, never interpreted as HTML. Enhanced relative
 `<offset,duration,flags>` and absolute `(start,duration,flags)` words produce MyGo
-millisecond lines/words. Translation remains in the top-level LRC field.
+millisecond lines/words. The top-level `translation` LRC string is preserved;
+structured lines also receive `translation` text matched to the nearest start
+within strictly less than 1,500 ms, with earlier timestamps winning ties, as in
+MyGo. Multiple LRC timestamps are supported. Untimed/unmatched translations stay
+in the top-level string without invented timing (MyGo ignores that string when
+structured lines exist). Bracket scanning excludes nested opening brackets so
+malformed bracket runs cannot trigger overlapping suffix scans.
 Malformed times fail explicitly; ends must fit the enclosing line. Missing lyrics
 return `{}`. Each source/translation is limited to 1 MiB UTF-8 and 10,000 lines;
 enhanced lyrics allow 20,000 words. There is no guessed duration for plain LRC.
 
 Comments map `time_created` seconds to milliseconds, root `count` to `total`, and
-only boolean `liked` to liked state. Missing optional author/count/time fields are
+only boolean `liked` to liked state. Avatar objects use the first valid HTTP(S)
+URL in `medium_avatar_url.urls`; the asset `uri` is not treated as a URL. Legacy
+string avatars remain supported; absent or invalid object URLs are omitted. Missing optional author/count/time fields are
 omitted or empty; missing comment id/content or required page fields is an error.
 `has_more:false` wins even with a nonempty cursor. Offsets identify page boundaries,
 not upstream cursors. Unknown boundaries backfill at most eight requests per call,
@@ -79,8 +87,9 @@ Concurrent reads of the same track reject with pagination rather than racing.
 Evicted older offsets require `clear()` and a fresh bounded traversal.
 
 Input ids are 1–256 ASCII letters/digits/underscore/hyphen; names 1–200 characters,
-comments 1–5,000 characters, append batches 1–100 ids. All batch inputs validate
-before sending any request.
+comments 1–5,000 characters, append batches 1–100 ids. The batch is copied and every copied entry validated
+before sending any request, including sparse entries. Appending, replacing or
+removing caller-array entries during a pending request cannot alter the batch.
 
 ## Verification and limits
 
@@ -91,9 +100,15 @@ failures, then implemented and passed the suite. Bounded offline command:
 node --test tests/helper-community.test.cjs tests/helper-actions.test.cjs
 ```
 
-15 tests cover payloads, unknown outcomes, no retry, partial append completion,
+20 tests cover payloads, unknown outcomes, no retry, partial append completion,
 cache invalidation, malformed responses, lyric formats/translation/time/limits,
 comment mapping, cursor termination/cycles/duplicates, and traversal budgets.
+Five regression tests added for review `community-001-01` first failed against
+the reviewed implementation, then passed after fixes: malformed bracket runs in
+a subprocess with a two-second deadline; structured-line translation alignment;
+object-shaped avatar URLs; caller mutation during append; and sparse/oversized
+batch rejection before writes. All original tests remain. This records local fix
+validation only; the independent review status remains unchanged pending re-review.
 Only synthetic injected fixtures were used. No network, credentials or real
 account data were accessed; the account-derived read-results file was deliberately
 not read. Local source contracts and MyGo DTO declarations supplied context.

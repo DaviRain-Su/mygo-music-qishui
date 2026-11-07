@@ -68,3 +68,32 @@ test('post invalidates cached pages on success and uncertainty',async()=>{
     await c.comments({trackId:'t'});assert.equal(reads,2);
   }
 });
+
+test('malformed bracket runs finish within a bounded subprocess deadline',()=>{
+  const {spawnSync}=require('node:child_process');
+  const result=spawnSync(process.execPath,['-e',`
+    const {parseLyrics}=require('./helper/community.cjs');
+    for(const content of ['[1'.repeat(200000), '[1'.repeat(200000)+':00]', '[1:'.repeat(150000)]) {
+      parseLyrics({content});
+    }
+  `],{cwd:require('node:path').resolve(__dirname,'..'),timeout:2000,encoding:'utf8'});
+  assert.ifError(result.error);
+  assert.equal(result.status,0,result.stderr);
+});
+test('enhanced translations reach structured lines using timestamp alignment',()=>{
+  const content='[1000,500]<0,500,0>One\n[3000,500](3000,500,0)Two\n[6000,500]<0,500,0>Three';
+  const translation='[00:03.10]二\n[00:01.00]一\n[00:20.00]unmatched';
+  const parsed=parseLyrics({content,translations:{cn:translation}});
+  assert.equal(parsed.translation,translation);
+  assert.deepEqual(parsed.lines.map(l=>l.translation),['一','二',undefined]);
+  assert.deepEqual(parseLyrics({content,translations:{cn:'[00:01.00][00:03.00]重复'}}).lines.map(l=>l.translation),['重复','重复',undefined]);
+  assert.equal(parseLyrics({content,translations:{cn:'untimed'}}).lines[0].translation,undefined);
+  assert.deepEqual(parseLyrics({content,translations:{cn:'[00:02.00]tie\n[00:04.50]too far'}}).lines.map(l=>l.translation),['tie',undefined,undefined]);
+});
+test('comments extract HTTP avatar URLs from object urls without treating uri as a URL',()=>{
+  const {mapComment}=require('../helper/community.cjs');
+  const mapped=avatar=>mapComment({...row('x'),user:{medium_avatar_url:avatar}});
+  assert.equal(mapped({uri:'asset/key',urls:['invalid','javascript:alert(1)','https://example.test/avatar']}).avatarUrl,'https://example.test/avatar');
+  assert.equal(mapped('https://example.test/legacy').avatarUrl,'https://example.test/legacy');
+  for(const avatar of [{uri:'asset/key',urls:[]},{urls:[null,{}]},null]) assert.equal(mapped(avatar).avatarUrl,undefined);
+});

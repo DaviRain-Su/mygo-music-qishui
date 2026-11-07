@@ -58,3 +58,21 @@ test('network uncertainty is sanitized for every action and never retried',async
     await assert.rejects(invoke(a),e=>e.code==='mutation-unknown'&&!e.message.includes('private'));assert.equal(calls,1);assert.equal(invalid,1);
   }
 });
+
+test('append snapshots caller ids before awaiting the first request',async()=>{
+  const ids=['first','second'];const sent=[];let release;
+  const pending=new Promise(resolve=>{release=resolve;});
+  const a=new Actions({api:async(_path,_query,body)=>{sent.push(body.media[0].id);if(sent.length===1)await pending;return {};},invalidate:()=>{}});
+  const result=a.addToPlaylist({playlistId:'p',ids});
+  ids[1]='invalid/id';ids.push(...Array(101).fill('extra'));
+  release();
+  assert.deepEqual(await result,{confirmed:2});
+  assert.deepEqual(sent,['first','second']);
+});
+test('append validates every snapshot entry and batch bounds before writes',async()=>{
+  let calls=0;const a=new Actions({api:async()=>{calls++;return {};},invalidate:()=>{}});
+  for(const ids of [[],Array(101).fill('x'),['valid',undefined],new Array(2)]) {
+    await assert.rejects(a.addToPlaylist({playlistId:'p',ids}),{code:'input'});
+  }
+  assert.equal(calls,0);
+});

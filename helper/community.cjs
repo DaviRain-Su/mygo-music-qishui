@@ -3,6 +3,35 @@ const {mutate,error,object,id,text}=require('./actions.cjs');
 const MAX_BYTES=1024*1024, MAX_LINES=10000, MAX_WORDS=20000;
 function bounded(value) {if(typeof value!=='string')throw error('response');if(value.length>MAX_BYTES||Buffer.byteLength(value)>MAX_BYTES)throw error('limit');if(value.split('\n').length>MAX_LINES)throw error('limit');return value;}
 function time(value) {if(!Number.isSafeInteger(value)||value<0)throw error('response');return value;}
+// Excluding both bracket characters prevents overlapping suffix scans on malformed input.
+function lrcTags(source) {
+  const tags=[];
+  for(const tag of source.matchAll(/\[([^\[\]]*)\]/g)) {
+    if(!/^-?\d/.test(tag[1])||!tag[1].includes(':'))continue;
+    const m=/^(\d+):([0-5]\d)(?:\.(\d{1,3}))?$/.exec(tag[1]);
+    if(!m)throw error('response');
+    tags.push({start:time(Number(m[1])*60000+Number(m[2])*1000+Number((m[3]||'').padEnd(3,'0'))),end:tag.index+tag[0].length});
+  }
+  return tags;
+}
+function alignTranslations(lines,translation) {
+  // Match MyGo's nearest-time rule without a lines-by-translations nested scan.
+  const sorted=[...lines].sort((a,b)=>a.start-b.start);
+  const unique=sorted.filter((line,i)=>i===0||line.start!==sorted[i-1].start);
+  for(const source of translation.split(/\r?\n/)) {
+    const tags=lrcTags(source);if(!tags.length)continue;
+    const value=source.slice(tags.at(-1).end).trim();if(!value)continue;
+    for(const tag of tags) {
+      let lo=0,hi=unique.length;
+      while(lo<hi) {const mid=(lo+hi)>>>1;if(unique[mid].start<tag.start)lo=mid+1;else hi=mid;}
+      let best,gap=1500;
+      for(const candidate of [unique[lo-1],unique[lo]]) {
+        if(candidate&&Math.abs(candidate.start-tag.start)<gap) {best=candidate;gap=Math.abs(candidate.start-tag.start);}
+      }
+      if(best&&best.translation===undefined)best.translation=value;
+    }
+  }
+}
 function parseLyrics(lyric) {
   if(lyric==null)return {};if(!object(lyric))throw error('response');
   const content=bounded(lyric.content??'');const translation=bounded(lyric.translations?.cn??'');
@@ -24,12 +53,10 @@ function parseLyrics(lyric) {
       lines.push({start,end,text:words.map(w=>w.text).join(''),words});
     } else {
       // Preserve ordinary LRC, but reject invalid numeric timestamp syntax.
-      for(const tag of source.matchAll(/\[(-?\d[^\]]*:[^\]]*)\]/g)) {
-        const m=/^(\d+):([0-5]\d)(?:\.(\d{1,3}))?$/.exec(tag[1]);if(!m)throw error('response');time(Number(m[1])*60000+Number(m[2])*1000+Number((m[3]||'').padEnd(3,'0')));
-      }
+      lrcTags(source);
     }
   }
-  if(lines.length)out.lines=lines;
+  if(lines.length) {alignTranslations(lines,translation);out.lines=lines;}
   return out;
 }
 function number(v) {if(typeof v==='string'&&!/^\d+$/.test(v))throw error('response');if(!['string','number'].includes(typeof v))throw error('response');return time(Number(v));}
@@ -37,7 +64,16 @@ function mapComment(raw) {
   if(!object(raw))throw error('response');try{id(raw.id);}catch{throw error('response');}
   if(typeof raw.content!=='string')throw error('response');bounded(raw.content);
   const out={id:raw.id,author:typeof raw.user?.nickname==='string'?raw.user.nickname:'',text:raw.content};
-  if(typeof raw.user?.medium_avatar_url==='string')out.avatarUrl=raw.user.medium_avatar_url;
+  const avatar=raw.user?.medium_avatar_url;
+  // Retain the legacy string shape; observed object responses contain URL candidates.
+  if(typeof avatar==='string')out.avatarUrl=avatar;
+  else if(Array.isArray(avatar?.urls)) {
+    const url=avatar.urls.find(value=>{
+      if(typeof value!=='string')return false;
+      try {return ['http:','https:'].includes(new URL(value).protocol);}catch{return false;}
+    });
+    if(url)out.avatarUrl=url;
+  }
   if(raw.time_created!==undefined)out.time=time(number(raw.time_created)*1000);
   if(raw.count_digged!==undefined)out.likes=number(raw.count_digged);
   if(typeof raw.liked==='boolean')out.liked=raw.liked;

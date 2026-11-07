@@ -20,9 +20,10 @@ class Actions {
   async collection(kind,value,on,scope) {if(!['playlist','album'].includes(kind))throw error('input');id(value);if(typeof on!=='boolean')throw error('input');await mutate(this.api,'/luna/pc/me/collection/'+kind+(on?'':'/delete'),{[kind+'_ids']:[value]},this.invalidate,scope);return {ok:true};}
   async createPlaylist({name}={}) {text(name,200);return mutate(this.api,'/luna/pc/me/playlist',{name},this.invalidate,'playlists',v=>{const p=v.playlist||v.data?.playlist;if(!object(p))throw error('mutation-unknown');id(p.id);return {id:p.id,name};});}
   async addToPlaylist({playlistId,ids}={}) {
-    id(playlistId);if(!Array.isArray(ids)||!ids.length||ids.length>100)throw error('input');ids.forEach(id);
+    id(playlistId);if(!Array.isArray(ids)||!ids.length||ids.length>100)throw error('input');
+    const batch=Array.from({length:ids.length},(_,i)=>id(ids[i]));
     let confirmed=0;
-    for(const value of ids) {await mutate(this.api,'/luna/pc/me/playlist/media/append',{playlist_id:playlistId,media:[{id:value,type:'track'}]},this.invalidate,'playlists',v=>v,confirmed);confirmed++;}
+    for(const value of batch) {await mutate(this.api,'/luna/pc/me/playlist/media/append',{playlist_id:playlistId,media:[{id:value,type:'track'}]},this.invalidate,'playlists',v=>v,confirmed);confirmed++;}
     return {confirmed};
   }
   async played({id:value}={}) {id(value);await mutate(this.api,'/luna/pc/me/recently-played-media',{media:[{type:'track',id:value}]},this.invalidate,'recent');return {ok:true};}
