@@ -1,6 +1,6 @@
 // MyGo Qishui: official browser SDK authentication runs in a private helper.
 // No unsigned-fetch fallback, no default/placeholder successful account.
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const cookie = () => host.storage.get("authBackend") === "sdk-v1" ? host.storage.get("cookie") || "" : "";
 function fail(code, message) { const error = new Error(message); error.code = code; return error; }
 function needAccount() { if (!account()) throw fail("signIn", "请先使用官方 SDK 登录汽水音乐。"); }

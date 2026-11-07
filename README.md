@@ -2,7 +2,7 @@
 
 实验性的汽水音乐音源，适用于 [MyGo Music](https://github.com/egoist/mygo-music) 0.1.7+。
 
-## 0.4.0：功能模块接入（离线验证）
+## 0.4.1：封面/电台图标修复（基于 0.4.0 功能接入）
 
 真实 Catalog / Community / Actions 已接入 MyGo exports → JSONL `catalog`
 → `helper/features.cjs` → Runtime API。没有实现官方原生 App 的全部页面。
@@ -22,7 +22,7 @@
 
 本轮仅验证合成 API 响应、真实模块、宿主桥接和本地合成音频；没有联网、读取
 账号文件或执行真实账号变更。既有登录/播放实测记录属于历史证据，不代表
-0.4.0 全部功能线上通过。当前仍需独立只读验收、真实授权 FLAC 与桌面出声验收；
+0.4.1 已修复封面 CDN 模板；0.4.0 功能接入保留。当前仍需你本地确认桌面出声与主动写操作；
 真实写入必须另获用户明确授权。详见 [集成接口与交付记录](docs/features/integration.md)、
 [功能合同](docs/features/README.md) 和 [音质边界](docs/features/quality.md)。
 
@@ -46,7 +46,7 @@
 
 ## 安装
 
-1. 先按下文生成代码包，再在 MyGo → Settings → Plugins → **+** 导入 `plugin-qishui-0.4.0.zip`。本轮未发布 Release，也未改动已安装插件。
+1. 先按下文生成代码包，再在 MyGo → Settings → Plugins → **+** 导入 `plugin-qishui-0.4.1.zip`。本轮未改动已安装插件。
 2. 安装 **Node.js 22.12+ 和 npm**。播放转换另需 ffmpeg；macOS 可使用 `brew install node ffmpeg`。
 3. 在插件目录执行一次：
 
@@ -64,7 +64,7 @@
    首次认证从官方 CDN 下载固定版本安全 SDK，校验 SHA-256 后缓存。**没有在仓库中分发官方 SDK 或原生二进制。**
 
 4. 在插件设置中允许启动程序（**Node.js → Electron**，播放另用 ffmpeg）。
-5. 手动更新代码后，**⌘Q 完全退出 MyGo 再打开**。登录提示应显示 `[汽水 0.4.0 SDK]`。
+5. 手动更新代码后，**⌘Q 完全退出 MyGo 再打开**。登录提示应显示 `[汽水 0.4.1 SDK]`。
 
 当前仅验证 macOS arm64。读取曲库使用本机 `/Applications/汽水音乐.app/Contents/Resources/app.asar.unpacked/bdms.node` 官方原生 SDK；需要安装官方汽水客户端，但**不读取它已有的 Cookie、账号数据库或浏览器 profile**。其他平台、不同原生 SDK 版本仍需适配。
 
@@ -108,7 +108,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_package.
 
 ```sh
 python3 scripts/package.py
-# 输出 .dist/plugin-qishui-0.4.0.zip
+# 输出 .dist/plugin-qishui-0.4.1.zip
 ```
 
 单独验证 SDK 是否能启动并生成安全参数（不会输出二维码 token、Cookie 或账号信息）：
@@ -134,7 +134,7 @@ QISHUI_PLUGIN_SOURCE="$PWD/index.js" go -C "$MYGO_SOURCE" test ./internal/plugin
 
 ```sh
 cp tests/mygo-install-regression_test.go "$MYGO_SOURCE/internal/plugin/qishui_install_test.go"
-QISHUI_PLUGIN_DIR="$PWD" QISHUI_PLUGIN_ZIP="$PWD/.dist/plugin-qishui-0.4.0.zip" \
+QISHUI_PLUGIN_DIR="$PWD" QISHUI_PLUGIN_ZIP="$PWD/.dist/plugin-qishui-0.4.1.zip" \
   go -C "$MYGO_SOURCE" test ./internal/plugin -run TestQishuiInstallArtifacts -count=1 -v
 ```
 

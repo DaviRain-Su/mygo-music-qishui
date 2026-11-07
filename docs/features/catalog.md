@@ -35,7 +35,11 @@ after cancellation. Reads submitted after the reset can proceed. Ordinary accoun
 changes reset caches within the serialized read without cancelling later reads.
 
 DTOs use MyGo field names. Track duration is preserved in milliseconds, covers
-are placed in album.imageUrl, and no playable IDs are synthesized. A missing
+are placed in album.imageUrl, and no playable IDs are synthesized. Object-shaped
+`url_cover` / `cover_url` / station `url_info` must append a CDN transform:
+`~{template_prefix}-resize:400:400.webp` when `template_prefix` is a safe token,
+otherwise `~c5_400x400.jpg`. Bare `urls[0]+uri` is not a displayable image
+(live probe returns HTTP 400). A missing
 album is represented by empty album ID/name, not a made-up navigable album.
 PC `entity.track`, `entity.track_wrapper.track` with base/display/related info,
 and direct entities are supported. Unsupported discover cards are skipped.

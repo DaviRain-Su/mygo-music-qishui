@@ -9,9 +9,18 @@ function list(value) { if (!Array.isArray(value) || value.length>5000) throw fau
 function entity(raw,kind) { const v=raw?.entity?.[kind] ?? raw?.[kind] ?? raw; if (!v || typeof v!=='object' || Array.isArray(v) || typeof v.id!=='string' || !/^[\w-]{1,128}$/.test(v.id)) throw fault('response'); return v; }
 function text(v) { return typeof v==='string' ? v.slice(0,4096) : ''; }
 function image(v) {
- let url=typeof v==='string'?v:v?.urls?.find(x=>typeof x==='string' && /^https?:\/\//.test(x));
- if(typeof url!=='string'||!/^https?:\/\//.test(url))return undefined;
- if(typeof v?.uri==='string' && !url.includes(v.uri) && url.endsWith('/'))url+=v.uri;
+ // Absolute string covers are returned as-is. Object CDN descriptors need uri + transform.
+ if(typeof v==='string')return /^https?:\/\//.test(v)?v.slice(0,4096):undefined;
+ if(!v||typeof v!=='object'||Array.isArray(v))return undefined;
+ let url=Array.isArray(v.urls)?v.urls.find(x=>typeof x==='string' && /^https?:\/\//.test(x)):undefined;
+ if(typeof url!=='string')return undefined;
+ if(typeof v.uri==='string' && v.uri && v.uri.length<=512 && !url.includes(v.uri))url+=v.uri;
+ if(!url.includes('~')){
+  // Live CDN rejects bare base+uri (HTTP 400). Scene PNGs need template_prefix resize;
+  // tracks also accept ~c5_400x400.jpg when no prefix is supplied.
+  const prefix=typeof v.template_prefix==='string' && /^[A-Za-z0-9._-]{1,64}$/.test(v.template_prefix)?v.template_prefix:null;
+  url+=prefix?`~${prefix}-resize:400:400.webp`:'~c5_400x400.jpg';
+ }
  return url.slice(0,4096);
 }
 function mapArtist(raw) { const v=entity(raw,'artist');return {id:v.id,name:text(v.name),imageUrl:image(v.url_cover??v.medium_avatar_url)}; }

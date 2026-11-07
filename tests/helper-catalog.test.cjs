@@ -8,7 +8,7 @@ const account = async()=>({id:'me',name:'Me'});
 const make = api => new Catalog({api,account});
 const group = (kind,items,more=false,cursor='ignored')=>({result_groups:[{id:kind,data:items,has_more:more,next_cursor:cursor}]});
 test('DTOs preserve nested entities, covers and milliseconds without synthetic IDs',()=>{
- assert.equal(mapTrack(media('t')).duration,123456); assert.equal(mapTrack(media('t')).album.imageUrl,'https://img.test/a');
+ assert.equal(mapTrack(media('t')).duration,123456); assert.equal(mapTrack(media('t')).album.imageUrl,'https://img.test/a~c5_400x400.jpg');
  assert.equal(mapAlbum({entity:{album:track('t').album}}).id,'a'); assert.equal(mapArtist({entity:{artist:{id:'r',name:'R'}}}).name,'R');
  assert.equal(mapPlaylist({id:'p',title:'P',owner:{id:'other'}},'me').mine,false);
  assert.throws(()=>mapTrack({name:'bad'}));
@@ -90,7 +90,14 @@ test('feed sessions isolate modes and continue home, bounded repeated pages',asy
 });
 test('existing PC feed wrapper and items contract preserves real track ID and cover URI',async()=>{
  const wrapped={id:'wrapper',type:'track',entity:{track_wrapper:{track:{base_info:{id:'real',name:'Wrapped',duration:123000},display_info:{cover_url:{urls:['https://images.test/'],uri:'cover-key'}},related_info:{artist_links:[{id:'r',name:'R'}],album_link:{id:'a',name:'A'}}}}}};
- const c=make(async()=>({items:[wrapped],has_more:false}));const t=(await c.home()).sections[0].tracks[0];assert.equal(t.id,'real');assert.equal(t.duration,123000);assert.equal(t.album.imageUrl,'https://images.test/cover-key');assert.equal(t.artists[0].id,'r');
+ const c=make(async()=>({items:[wrapped],has_more:false}));const t=(await c.home()).sections[0].tracks[0];assert.equal(t.id,'real');assert.equal(t.duration,123000);assert.equal(t.album.imageUrl,'https://images.test/cover-key~c5_400x400.jpg');assert.equal(t.artists[0].id,'r');
+});
+test('object covers use template_prefix resize and keep ready-made string covers untouched',()=>{
+  const withPrefix={id:'t',name:'Song',duration:1,album:{id:'a',name:'A',url_cover:{urls:['https://p3-luna.douyinpic.com/img/'],uri:'tos-cn/x',template_prefix:'tplv-b829550vbb'}}};
+  assert.equal(mapTrack(withPrefix).album.imageUrl,'https://p3-luna.douyinpic.com/img/tos-cn/x~tplv-b829550vbb-resize:400:400.webp');
+  const stationish={urls:['https://p3-luna.douyinpic.com/img/'],uri:'tos-cn-i/icon.png',template_prefix:'tplv-b829550vbb'};
+  assert.equal(mapPlaylist({id:'p',title:'P',url_cover:stationish,count_tracks:0}).imageUrl,'https://p3-luna.douyinpic.com/img/tos-cn-i/icon.png~tplv-b829550vbb-resize:400:400.webp');
+  assert.equal(mapTrack({id:'s',name:'S',duration:1,album:{id:'a',name:'A'},display_info:{cover_url:'https://img.test/ready.jpg'}}).album.imageUrl,'https://img.test/ready.jpg');
 });
 test('search uses documented input method',async()=>{const c=make(async(p,q)=>{assert.equal(q.search_method,'input');return group('tracks',[]);});await c.search({query:'q'});});
 test('track mapping refuses explicitly non-track media',()=>{assert.throws(()=>mapTrack({id:'v',type:'video',name:'Video'}),{code:'response'});});

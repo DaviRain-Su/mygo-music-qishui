@@ -1,6 +1,6 @@
 # 汽水功能对齐：0.4 设计合同
 
-当前可安装集成版本：**0.4.0**（真实 Catalog/Community/Actions 已接到 MyGo exports/导航）。
+当前可安装集成版本：**0.4.1**（在 0.4.0 模块接入基础上修复封面/电台图标 CDN 模板后缀）。
 只读线上验收已覆盖首页、发现、榜单、电台、搜索翻页、喜欢/历史/收藏专辑、歌词与评论翻页。
 仍 blocked：专辑/艺人完整详情、suggest、关注艺人、歌单重命名/删除/移除/重排、评论点赞、Hi-Res/空间音频。
 写操作仅有离线契约验证，需用户主动触发后再确认；桌面出声与授权无损亦需本地确认。
@@ -66,6 +66,7 @@ Playback helper (independent): true source FLAC → lossless FLAC; AAC → MP3
 
 - 必须验证字符串ID、offset非负安全整数、输入上限；禁止任意URL或请求路径输入。
 - DTO 严格采用 MyGo music.go 字段，duration/评论/歌词均毫秒，cover进入album.imageUrl，不使用虚构ID。
+- 汽水封面/电台图标不是完整可下载URL：`url_cover`/`url_info`/`cover_url` 常见形态为 `{urls:['https://p*-luna.douyinpic.com/img/'], uri, template_prefix}`。只拼 `urls[0]+uri` 会HTTP 400。必须补CDN变换后缀：有合法 `template_prefix` 时用 `~{template_prefix}-resize:400:400.webp`（情景电台PNG实测只有这种可通）；否则用 `~c5_400x400.jpg`。已是 `https?://` 字符串且自带`~`的不重复追加。评论头像urls通常已是完整jpeg，不走此规则。
 - 搜索每种类型使用独立路径和独立 query/kind 的 offset→opaque cursor 缓存，不能把offset直接当游标。PC JSON已观察到protobuf默认值省略：只有has_more===true才续页；false或缺失都结束，不能用残留cursor或total推导更多。非boolean的has_more仍报错；在more=true时缺游标、重复/循环游标、空页带更多必须报错，不能无限重复第一页。
 - offset从0开始；未知offset可有限顺序回填，最多8页/一次调用、总时间/数据量有限，超出报 pagination 而不是返回假空页。
 - `playlists()` 合并自己与收藏歌单，去重时自己拥有优先；mine 只能由 owner.id 与 account.id 或可信created来源证明。

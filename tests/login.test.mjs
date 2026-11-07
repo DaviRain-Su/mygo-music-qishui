@@ -164,7 +164,7 @@ test('logged-in home sends the PC feed POST and maps track wrappers in milliseco
   assert.equal(home.sections[0].tracks[0].id, 'track-7');
   assert.equal(home.sections[0].tracks[0].duration, 123000);
   assert.equal(home.sections[0].tracks[0].artists[0].name, 'Fixture artist');
-  assert.ok(home.sections[0].tracks[0].album.imageUrl.startsWith('https://images.test/cover-key'));
+  assert.equal(home.sections[0].tracks[0].album.imageUrl,'https://images.test/cover-key~c5_400x400.jpg');
 });
 
 test('search handles root result_groups rather than requiring data.data', async t => {

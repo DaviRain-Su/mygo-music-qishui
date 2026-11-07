@@ -12,7 +12,9 @@
 | community-002 | 评论终页省略与歌词翻译时间排序 | done（模块，24项测试+独立复审） | community-001 |
 | quality-001 | 真实FLAC无损契约与安全兼容性，不伪装AAC为无损 | done（模块，19项测试+独立复审） | — |
 | integration-001 | helper路由、全部可兑现exports、导航、缓存失效、安装包/文档 | done（0.4.0，159项Node+独立复审+只读线上验收） | catalog/community/quality |
+| covers-001 | 封面/电台图标 CDN 模板后缀 | done（直播探测+聚焦测试） | catalog-001 |
 | acceptance-001 | 独立验证、只读线上验收、已支持与blocked清单 | in-progress | integration-001 |
+| covers-001 | 封面/电台图标 CDN 模板后缀 | done（直播探测+聚焦测试） | catalog-001 |
 | acceptance-001 | 独立验证、只读线上验收、已支持与blocked清单 | pending | integration-001 |
 
 三个模块路径互不重叠，分别使用 git worktree；实现提交后由全新verify agent审查，blocking修复后才合并。集成单独任务，必须测试真实模块而不是只mock JSONL返回。
