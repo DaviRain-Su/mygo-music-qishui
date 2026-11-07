@@ -3,7 +3,7 @@ const { BrowserWindow, session, protocol } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const QRCode = require('qrcode');
+const { loadRuntime } = require('./dependencies.cjs');
 const { ensureAssets, ASSETS } = require('./assets.cjs');
 const { fault, apiURL } = require('./protocol.cjs');
 const { runLogin, hasSession } = require('./auth-flow.cjs');
@@ -43,6 +43,8 @@ class Runtime {
     this.dataDir = dataDir; this.emit = emit; this.window = null; this.initializing = null;
     this.msToken = ''; this.issuedToken = ''; this.observed = null; this.controller = null; this.signedRequests = new Map();
     this.sdkReady = false; this.native = null; this.nativeLoaded = false; this.locked = false;
+    this.dependencies = loadRuntime(dataDir);
+    this.qrcode = this.dependencies.require('qrcode');
   }
   async base() {
     if (this.identity) return;
@@ -107,8 +109,8 @@ class Runtime {
     const files = new Map([
       ['/auth/index.html', [path.join(__dirname, 'renderer.html'), 'text/html; charset=utf-8']],
       ['/auth/renderer.js', [path.join(__dirname, 'renderer.js'), 'text/javascript; charset=utf-8']],
-      ['/auth/react.js', [path.join(path.dirname(require.resolve('react/package.json')), 'umd/react.production.min.js'), 'text/javascript; charset=utf-8']],
-      ['/auth/react-dom.js', [path.join(path.dirname(require.resolve('react-dom/package.json')), 'umd/react-dom.production.min.js'), 'text/javascript; charset=utf-8']],
+      ['/auth/react.js', [path.join(path.dirname(this.dependencies.require.resolve('react/package.json')), 'umd/react.production.min.js'), 'text/javascript; charset=utf-8']],
+      ['/auth/react-dom.js', [path.join(path.dirname(this.dependencies.require.resolve('react-dom/package.json')), 'umd/react-dom.production.min.js'), 'text/javascript; charset=utf-8']],
       ...[...assets].map(([name, file]) => ['/auth/' + name, [file, 'text/javascript; charset=utf-8']]),
     ]);
     if (await this.ses.protocol.isProtocolHandled('app')) this.ses.protocol.unhandle('app');
@@ -286,7 +288,7 @@ class Runtime {
         progress: event => {
           this.emit(event);
           if (this.window && !this.window.isDestroyed()) {
-            const update = async () => { const image = event.qr && showWindow ? await QRCode.toDataURL(event.qr) : null; await this.exec('show', event.text, image); if (showWindow && event.qr) { this.window.show(); this.window.focus(); } };
+            const update = async () => { const image = event.qr && showWindow ? await this.qrcode.toDataURL(event.qr) : null; await this.exec('show', event.text, image); if (showWindow && event.qr) { this.window.show(); this.window.focus(); } };
             update().catch(() => {});
           }
         },

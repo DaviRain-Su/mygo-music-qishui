@@ -1,6 +1,6 @@
 // MyGo Qishui: official browser SDK authentication runs in a private helper.
 // No unsigned-fetch fallback, no default/placeholder successful account.
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 const UA = "LunaPC/3.5.2";
 const t = typeof host.t === "function" ? (text) => host.t(text) : (text) => text;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -22,7 +22,7 @@ async function dispatch(request) {
   const { id, op, params } = request;
   try {
     let result;
-    if (op === 'hello') result = { protocol: 1, version: '0.2.0', platform: process.platform, arch: process.arch };
+    if (op === 'hello') result = { protocol: 1, version: '0.2.1', platform: process.platform, arch: process.arch };
     else if (op === 'signIn') {
       if (loginId !== null) throw fault('busy'); loginId = id;
       try { result = await runtime.signIn(params.showWindow === true); } finally { loginId = null; }

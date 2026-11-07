@@ -3,7 +3,7 @@ const MAX_LINE_BYTES = 65536;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const OPS = new Set(['hello', 'signIn', 'account', 'signOut', 'request', 'probe', 'shutdown']);
 const MESSAGES = Object.freeze({
-  setup: '汽水 SDK 辅助程序未安装或无法启动，请查看插件 README 的安装步骤。',
+  setup: '汽水 SDK 运行时未就绪。请在插件目录运行 node helper/install.cjs；依赖将安装到独立数据目录。不要在插件目录执行 npm install/ci。',
   protocol: '汽水辅助程序协议数据无效。',
   busy: '已有汽水登录正在进行，请先完成或取消当前登录。',
   network: '无法连接汽水认证服务，请检查网络。',

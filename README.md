@@ -2,7 +2,13 @@
 
 实验性的汽水音乐音源，适用于 [MyGo Music](https://github.com/egoist/mygo-music) 0.1.7+。
 
-## 0.2.0 的实际验证状态
+## 0.2.1 安装修复
+
+0.2.0 曾把 `node_modules`/Electron 放在插件代码目录，导致 MyGo 报 **`a link in the plugin: helper/node_modules/...`**（Electron 自带符号链接）。这不是让你执行 unlink，而是安装器的安全拒绝。
+
+**0.2.1 把依赖放到了 `plugin-data/qishui/sdk-runtime/`，插件目录与安装 ZIP 只保留代码。** 本地目录和 ZIP 均用 MyGo 0.1.7 的实际安装器验证；代码更新不再清掉运行时依赖。请勿把旧版包含 `node_modules` 的目录重新导入。
+
+## 登录与曲库的实际验证状态
 
 旧版纯 HTTP 扫码路径（0.1.x，错误码 7）已移除，改为 **独立 Electron 会话 + 官方安全 SDK**。
 
@@ -16,23 +22,37 @@
 
 ## 安装
 
-1. MyGo → Settings → Plugins → **+** → `DaviRain-Su/mygo-music-qishui`。
-2. 安装 **Node.js 22.12+**。播放转换另需 ffmpeg；macOS 可使用 `brew install node ffmpeg`。
-3. 打开插件目录（Settings → Plugins → Show Plugins Folder），进入 `qishui/helper`，明确执行依赖安装：
+1. MyGo → Settings → Plugins → **+** → `DaviRain-Su/mygo-music-qishui`，或导入 [Releases](https://github.com/DaviRain-Su/mygo-music-qishui/releases) 中的 `plugin-qishui-0.2.1.zip`。
+2. 安装 **Node.js 22.12+ 和 npm**。播放转换另需 ffmpeg；macOS 可使用 `brew install node ffmpeg`。
+3. 在插件目录执行一次：
 
    ```sh
-   npm ci --no-audit --no-fund
-   node install.cjs
+   cd "$HOME/Library/Application Support/MyGo Music/plugins/qishui"
+   node helper/install.cjs
    ```
 
-   会安装固定版本的 Electron（下载约数百 MB）、React 和二维码库。首次认证会从官方 CDN 下载固定版本安全 SDK，校验 SHA-256 后保存在插件私有数据目录。**没有在仓库中分发官方 SDK 或原生二进制。**
+   **不要在插件目录执行 `npm install` 或 `npm ci`。** 上述命令会自己在独立数据目录安装固定版本 Electron、React 和二维码库；相同依赖已安装时直接复用。Electron 下载约数百 MB，但不进入插件安装包。源码开发或自定义 MyGo 数据目录可显式指定：
 
-4. 在插件设置中允许启动程序。新版本需要运行 **Node.js → Electron**，不再只有 ffmpeg。
-5. **⌘Q 完全退出 MyGo 后重开**。登录提示应显示 `[汽水 0.2.0 SDK]`。
+   ```sh
+   node helper/install.cjs --data-dir "/你的路径/plugin-data/qishui/auth-sdk"
+   ```
+
+   首次认证从官方 CDN 下载固定版本安全 SDK，校验 SHA-256 后缓存。**没有在仓库中分发官方 SDK 或原生二进制。**
+
+4. 在插件设置中允许启动程序（**Node.js → Electron**，播放另用 ffmpeg）。
+5. 手动更新代码后，**⌘Q 完全退出 MyGo 再打开**。登录提示应显示 `[汽水 0.2.1 SDK]`。
 
 当前仅验证 macOS arm64。读取曲库使用本机 `/Applications/汽水音乐.app/Contents/Resources/app.asar.unpacked/bdms.node` 官方原生 SDK；需要安装官方汽水客户端，但**不读取它已有的 Cookie、账号数据库或浏览器 profile**。其他平台、不同原生 SDK 版本仍需适配。
 
-插件更新可能替换整个插件目录，若 `helper/node_modules` 被移除，请重新执行第 3 步；账号会话在独立的数据目录，不随代码安装目录清除。
+目录分工：
+
+```text
+plugins/qishui/                         # 可安装、可更新的代码，无 node_modules
+plugin-data/qishui/sdk-runtime/<key>/   # npm/Electron 依赖，按锁定版本及平台复用
+plugin-data/qishui/auth-sdk/            # 本插件的私有账号会话和安全 SDK 缓存
+```
+
+代码更新不会删除依赖或账号会话。只有依赖版本或平台改变、运行时损坏时，才需要重新执行安装命令。不要删除 `auth-sdk` 来解决安装报错。
 
 ## 登录
 
@@ -57,6 +77,14 @@ Chromium 可能在服务端已经下发 Cookie 后，仍将确认响应报告为
 
 ```sh
 node --experimental-vm-modules --test tests/login.test.mjs tests/helper-*.test.cjs
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_package.py
+```
+
+生成不含依赖的安装包：
+
+```sh
+python3 scripts/package.py
+# 输出 .dist/plugin-qishui-0.2.1.zip
 ```
 
 单独验证 SDK 是否能启动并生成安全参数（不会输出二维码 token、Cookie 或账号信息）：
@@ -76,6 +104,14 @@ MyGo 0.1.7 真实运行时模拟测试，`MYGO_SOURCE` 指向其源码目录：
 ```sh
 cp tests/mygo-login-regression_test.go "$MYGO_SOURCE/internal/plugin/qishui_regression_test.go"
 QISHUI_PLUGIN_SOURCE="$PWD/index.js" go -C "$MYGO_SOURCE" test ./internal/plugin -run TestQishuiLoginRegression -count=1 -v
+```
+
+安装器回归（验证源码目录和最终 ZIP，不能用直接复制文件代替）：
+
+```sh
+cp tests/mygo-install-regression_test.go "$MYGO_SOURCE/internal/plugin/qishui_install_test.go"
+QISHUI_PLUGIN_DIR="$PWD" QISHUI_PLUGIN_ZIP="$PWD/.dist/plugin-qishui-0.2.1.zip" \
+  go -C "$MYGO_SOURCE" test ./internal/plugin -run TestQishuiInstallArtifacts -count=1 -v
 ```
 
 这些自动化模拟测试不能代替真实账号验收。参考：[官方 YouTube 插件](https://github.com/egoist/mygo-music-youtube-music)、[Folia 汽水认证适配](https://github.com/2706521883-lgtm/folia-qishui)。

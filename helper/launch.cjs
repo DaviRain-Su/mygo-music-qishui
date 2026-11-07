@@ -1,19 +1,15 @@
 'use strict';
-const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { MAX_RESPONSE_BYTES, publicError, fault } = require('./protocol.cjs');
+const { loadRuntime, resolveElectron } = require('./dependencies.cjs');
 const fail = code => { process.stdout.write(JSON.stringify({ event: 'fatal', error: publicError(fault(code)) }) + '\n'); process.exitCode = 1; };
 const index = process.argv.indexOf('--data-dir');
 const dataDir = index >= 0 ? process.argv[index + 1] : '';
 if (!dataDir || !path.isAbsolute(dataDir)) { fail('setup'); process.exit(); }
 let binary;
-try {
-  const dir = path.dirname(require.resolve('electron/package.json'));
-  const relative = fs.readFileSync(path.join(dir, 'path.txt'), 'utf8').trim();
-  binary = path.resolve(dir, 'dist', relative);
-  if (!binary.startsWith(path.join(dir, 'dist') + path.sep) || !fs.existsSync(binary)) throw 0;
-} catch { fail('setup'); process.exit(); }
+try { binary = resolveElectron(loadRuntime(dataDir)); }
+catch { fail('setup'); process.exit(); }
 const env = { MYGO_QISHUI_HELPER: '1' };
 for (const key of ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'WINDIR', 'LOCALAPPDATA', 'APPDATA', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_RUNTIME_DIR', 'LANG', 'LC_ALL', 'DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS', '__CF_USER_TEXT_ENCODING']) {
   if (process.env[key]) env[key] = process.env[key];

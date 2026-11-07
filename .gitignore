@@ -2,3 +2,5 @@
 node_modules/
 *.log
 .auth-sdk/
+.dist/
+__pycache__/

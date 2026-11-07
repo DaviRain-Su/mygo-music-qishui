@@ -2,10 +2,10 @@
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
 const path = require('node:path');
-const os = require('node:os');
+const { defaultDataDir } = require('./dependencies.cjs');
 const login = process.argv.includes('--login');
 const at = process.argv.indexOf('--data-dir');
-const dataDir = at >= 0 ? path.resolve(process.argv[at + 1]) : path.join(os.tmpdir(), 'mygo-qishui-sdk-probe');
+const dataDir = at >= 0 ? path.resolve(process.argv[at + 1]) : defaultDataDir();
 const child = spawn(process.execPath, [path.join(__dirname, 'launch.cjs'), '--data-dir', dataDir], { stdio: ['pipe', 'pipe', 'inherit'] });
 const pending = new Map(); let nextId = 0;
 const request = (op, params = {}) => new Promise((resolve, reject) => {
