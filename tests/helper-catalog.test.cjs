@@ -65,6 +65,23 @@ test('history maps tracks; discovery skips video and separates charts',async()=>
  const c=make(async p=>p.endsWith('/recently-played-media')?{media:[media('h')],has_more:false}:{blocks:[{title:'D',inner_block:[{resources:[{entity:{playlist:{id:'p',title:'P'}}},{entity:{ranked_track:{track:track('r')}}},{entity:{video:{id:'v'}}}]}]}]});
  assert.equal((await c.recent())[0].id,'h');assert.equal((await c.browse({page:'charts'})).sections[0].tracks[0].id,'r');assert.equal((await c.browse({page:'discover'})).sections[0].playlists[0].id,'p');
 });
+test('discovery posts an empty body and charts filter mixed playlist/ranked_track blocks',async()=>{
+ const calls=[];
+ // Synthetic values following the supplied read-only schema: 10 playlist and 3 chart blocks.
+ const blocks=[
+  {type:'discover_feed_playlist',title:'Playlists',inner_block:Array.from({length:10},(_,i)=>({title:`Playlist ${i}`,resources:[{entity:{playlist:{id:`p${i}`,title:`P${i}`}}}]}))},
+  {type:'discover_top_song_list',title:'Charts',inner_block:Array.from({length:3},(_,i)=>({title:`Chart ${i}`,resources:[{entity:{ranked_track:{track:track(`r${i}`)}}},{entity:{playlist:{id:`extra${i}`,title:'Related'}}},{entity:{track:track(`plain${i}`)}},{entity:{video:{id:`v${i}`}}}]}))},
+ ];
+ const c=make(async(path,query,body)=>{calls.push({path,query,body});assert.equal(path,'/luna/pc/discover');assert.deepEqual(query,{});assert.deepEqual(body,{});return {blocks};});
+ const discovery=await c.browse({page:'discover'});
+ assert.equal(discovery.sections.length,13);
+ assert.deepEqual(discovery.sections.slice(0,10).flatMap(s=>s.playlists.map(p=>p.id)),Array.from({length:10},(_,i)=>`p${i}`));
+ assert.deepEqual(discovery.sections.slice(10).map(s=>s.tracks.map(t=>t.id)),[['r0','plain0'],['r1','plain1'],['r2','plain2']]);
+ assert.deepEqual(discovery.sections.slice(10).flatMap(s=>s.playlists.map(p=>p.id)),['extra0','extra1','extra2']);
+ const charts=await c.browse({page:'charts'});
+ assert.deepEqual(charts,{title:'榜单',sections:Array.from({length:3},(_,i)=>({title:`Chart ${i}`,tracks:[mapTrack(track(`r${i}`))],albums:[],artists:[],playlists:[]}))});
+ assert.equal(calls.length,2);
+});
 test('feed sessions isolate modes and continue home, bounded repeated pages',async()=>{
  const bodies=[];const c=make(async(p,q,b)=>{if(p.endsWith('/mode'))return {feed_mode_block:[{feed_mode:[{text:'Scene',entity:{feed_scene_mode:{scene_mode_id:4}}}]}],feed_mode_bar:{feed_mode:[]}};bodies.push(b);return {media:[media('t')]};});
  assert.ok((await c.stations()).some(x=>x.id==='scene:4')); const home=await c.home();assert.equal(home.sections[0].morePage,'feed:default');

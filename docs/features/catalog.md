@@ -46,6 +46,13 @@ absent; a present malformed field fails instead of falling back. This applies to
 Feed lists accept the `media` shape and the existing repository `items` fixture.
 Missing required lists fail; unknown shapes are not recursively guessed.
 
+Both discovery and charts POST `/luna/pc/discover` with an empty query and body
+`{}`. The supplied read-only evidence shows `discover_feed_playlist` and
+`discover_top_song_list` blocks together; `pc_new_discover_request: true`
+suppresses charts and must not be sent. Discovery retains supported cards,
+including `ranked_track.track`; charts keeps only ranked tracks and drops empty
+sections, including playlist-only sections.
+
 ## Pagination and bounds
 
 - Search caches are independent per exact query and kind; offsets count unique
@@ -91,10 +98,10 @@ No album/artist detail, search suggestions, or unverified endpoints are exported
 No host exports/dispatcher are connected by this task. Login, entitlement checks,
 and playback are unchanged. Live endpoint validation and end-to-end host testing
 remain integration work; these tests provide offline contract evidence only.
-The sanitized feed-mode schema truncates scene entity internals: numeric scene
-IDs and scene request payloads remain unverified by that evidence. Synthetic tests
-do not establish those live contracts; integration must validate them before
-claiming scene support.
+The new supplied `/tmp/qishui-mode-schema.json` summary establishes numeric
+`scene_mode_id` fields, string `sub_queue_type`, 45 scenes, and 3 preferences.
+It does not validate this module's scene request payloads or end-to-end behavior;
+those still require integration validation.
 
 ## Verification
 
@@ -108,7 +115,8 @@ fixture. No account files, credentials, network, or server mutations were used.
 Delivery: the original implementation was committed as
 `df500f762327dec6b5bf08b9abe434698848fbd8` and independently reviewed in
 `docs/plan/reviews/catalog-001-01.md`. That review is **BLOCKED**; its status has
-not been changed by this repair. The three blocking findings now have local fixes:
+not been changed by these repairs. That offline review is complete; its three
+blocking findings have local fixes:
 
 - Observed playlist list/wrapper mapping across continuation and terminal pages,
   exercised through detail, liked, and membership reads; invalid preferred lists
@@ -118,11 +126,20 @@ not been changed by this repair. The three blocking findings now have local fixe
 - Contradictory empty feed continuation raises a pagination error without ending
   the session, with subsequent continuation and terminal-empty coverage.
 
-The eight added regression tests failed before the fixes. Focused verification:
-**36/36 passed**, including all 28 existing tests; none removed or skipped.
-The stale delivery note is corrected here. Files are ready for orchestrator commit:
+The eight review regression tests failed before their fixes, then **36/36 passed**.
+The new discovery follow-up uses the updated feature contract and supplied
+`/tmp/qishui-discovery-schema.json`: 10 playlist blocks and 3 ranked-track blocks.
+Its regression asserts the exact empty request body for both routes, mixed
+discovery sections, and ranked-only chart filtering. It failed against the old
+request flags before the fix. Fixture values are synthetic; the supplied summaries
+are evidence from earlier read-only requests, not live validation of this code.
+Focused verification after this follow-up: **37/37 passed**, with all previous
+tests retained and none skipped. No network, account, or credential access was
+performed in this follow-up.
+
+Files are ready for orchestrator commit:
 `helper/catalog.cjs`, `tests/helper-catalog.test.cjs`, `docs/features/catalog.md`.
-No staging/commit was attempted during this repair, and no shared Git metadata was
-modified. Independent re-review of the fixes, public pagination-error serialization,
+No staging/commit was attempted during this follow-up, and no shared Git metadata
+was modified. Independent re-review of the fixes, public pagination-error serialization,
 host/dispatcher wiring, lifecycle invalidation, live schema validation (including
 scene modes), and end-to-end host/installer tests remain integration obligations.

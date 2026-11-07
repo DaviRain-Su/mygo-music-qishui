@@ -143,7 +143,8 @@ class Catalog {
  }
  stationNext({id:value}={}) {return this._run(async ctx=>{if(typeof value!=='string')throw fault('protocol');return (await this._feed(ctx,value)).tracks;});}
  async _discover(ctx,charts) {
-  const root=await this._api(ctx,'discover',{}, {first_request:false,pc_new_discover_request:true});const sections=[];let visited=0;
+  // The new-discovery flag suppresses chart blocks; both routes need the mixed response.
+  const root=await this._api(ctx,'discover',{},{});const sections=[];let visited=0;
   for(const block of list(root.blocks))for(const inner of list(block.inner_block)){
    this._check(ctx);if(++visited>5000)throw pagination();
    const section={title:text(inner.title||block.title),tracks:[],albums:[],artists:[],playlists:[]};
