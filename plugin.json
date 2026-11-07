@@ -1,7 +1,7 @@
 {
   "id": "qishui",
   "name": "汽水音乐",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "minAppVersion": "0.1.7",
   "main": "index.js",
   "playback": "stream",
@@ -12,7 +12,12 @@
       "*.qishui.com"
     ],
     "process": [
-      "ffmpeg"
+      "node",
+      "/opt/homebrew/bin/node",
+      "/usr/local/bin/node",
+      "ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "/usr/local/bin/ffmpeg"
     ]
   },
   "navigation": [

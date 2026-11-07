@@ -1,0 +1,17 @@
+{
+  "name": "mygo-qishui-auth-helper",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Isolated official-SDK authentication runtime for the MyGo Qishui plugin",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "node launch.cjs",
+    "probe": "node probe.cjs"
+  },
+  "dependencies": {
+    "electron": "44.9.3",
+    "qrcode": "1.5.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}
