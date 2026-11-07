@@ -34,16 +34,28 @@ function mapTrack(raw) {
 function mapPlaylist(raw,accountId) { const v=entity(raw,'playlist');return {id:v.id,name:text(v.title||v.public_title||v.name),imageUrl:image(v.url_cover),description:text(v.description),owner:text(v.owner?.nickname),trackCount:Number.isSafeInteger(v.count_tracks)&&v.count_tracks>=0?v.count_tracks:0,mine:!!accountId&&v.owner?.id===accountId}; }
 const MAPPERS={tracks:mapTrack,albums:mapAlbum,artists:mapArtist,playlists:mapPlaylist};
 function unique(items) { return [...new Map(items.map(x=>[x.id,x])).values()]; }
-function nextPage(root,count,totalRead,cursors) {
+function terminal(root) {
  if(root.has_more!==undefined && typeof root.has_more!=='boolean') throw fault('response');
- if(root.has_more===false) return null;
- let more=root.has_more===true;
- if(root.total_num!==undefined) { if(!Number.isSafeInteger(root.total_num)||root.total_num<0) throw fault('response');more ||= totalRead<root.total_num; }
- // Legacy GET snapshots without any pagination metadata are single responses.
- if(!more) { if(root.next_cursor && root.has_more===undefined && root.total_num===undefined) more=true; else return null; }
+ return root.has_more!==true;
+}
+function successful(root) {
+ const status=root.status_info;
+ return !!status && typeof status==='object' && !Array.isArray(status) && status.status_code===0;
+}
+function pageList(root,field,emptyContext) {
+ const done=terminal(root);
+ const key=Array.isArray(field)?field.find(k=>Object.hasOwn(root,k)):field;
+ if((key===undefined || !Object.hasOwn(root,key)) && done && emptyContext())return [];
+ return list(root[key]);
+}
+function nextPage(root,count,cursors) {
+ const done=terminal(root);
+ if(root.has_more!==false && root.total_num!==undefined && (!Number.isSafeInteger(root.total_num)||root.total_num<0))throw fault('response');
+ if(done) return null;
  if(!count || typeof root.next_cursor!=='string'||!root.next_cursor||root.next_cursor.length>4096||cursors.has(root.next_cursor)) throw pagination();
  return root.next_cursor;
 }
+
 class Catalog {
  constructor({api,account,now=Date.now}={}) {
   if(typeof api!=='function'||typeof account!=='function'||typeof now!=='function') throw fault('protocol');
@@ -75,8 +87,11 @@ class Catalog {
  async _all(ctx,path,field,query={},mapper=x=>x,maxPages=50) {
   let cursor='';const cursors=new Set(['']);const out=[];let root;let rawCount=0;
   for(let page=0;page<maxPages;page++){
-   root=await this._api(ctx,path,{...query,cursor,count:100});const key=Array.isArray(field)?field.find(k=>Object.hasOwn(root,k)):field;const raw=list(root[key]);rawCount+=raw.length;if(rawCount>5000)throw pagination();out.push(...raw.map(mapper));
-   const next=nextPage(root,raw.length,rawCount,cursors);if(next===null)return {items:out,root};if(rawCount>=5000)throw pagination();cursors.add(next);cursor=next;
+   root=await this._api(ctx,path,{...query,cursor,count:100});const raw=pageList(root,field,()=>{
+    if(path==='playlist/detail'){const meta=root.playlist??root.playlist_info;return !!meta && mapPlaylist(meta,this.accountId).id===query.playlist_id;}
+    return successful(root);
+   });rawCount+=raw.length;if(rawCount>5000)throw pagination();out.push(...raw.map(mapper));
+   const next=nextPage(root,raw.length,cursors);if(next===null)return {items:out,root};if(rawCount>=5000)throw pagination();cursors.add(next);cursor=next;
   }throw pagination();
  }
  search({query,kind='tracks',offset:at=0}={}) {
@@ -87,8 +102,8 @@ class Catalog {
    for(let n=0;n<8;n++){
     if(at<s.items.length||s.done) return {[kind]:s.items.slice(at,at+20),more:at+20<s.items.length||!s.done};
     const root=await this._api(ctx,'search/'+KINDS[kind],{q:query,cursor:s.cursor,search_method:'input'});
-    const g=list(root.result_groups).find(x=>x.id===kind);if(!g)throw fault('response');const raw=list(g.data);const mapped=unique(raw.map(x=>MAPPERS[kind](x,this.accountId)));
-    const fresh=mapped.filter(x=>!s.items.some(y=>y.id===x.id));const next=nextPage(g,raw.length,s.items.length+raw.length,s.cursors);
+    const g=list(root.result_groups).find(x=>x.id===kind);if(!g)throw fault('response');const raw=pageList(g,'data',()=>successful(root));const mapped=unique(raw.map(x=>MAPPERS[kind](x,this.accountId)));
+    const fresh=mapped.filter(x=>!s.items.some(y=>y.id===x.id));const next=nextPage(g,raw.length,s.cursors);
     if(next!==null&&!fresh.length)throw pagination();if(s.items.length+fresh.length>5000)throw pagination();
     s.items.push(...fresh);s.done=next===null;if(next!==null){s.cursor=next;s.cursors.add(next);}
    }
