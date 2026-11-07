@@ -6,10 +6,10 @@
 
 | 任务 | 目标 | 状态 | 依赖 |
 | --- | --- | --- | --- |
-| catalog-001 | 分类搜索、库/详情分页、喜欢/收藏专辑、历史、发现/模式 | in-progress（离线复审通过，补真实发现页请求形态） | — |
+| catalog-001 | 分类搜索、库/详情分页、喜欢/收藏专辑、历史、发现/模式 | done（模块，37项测试+独立复审） | — |
 | community-001 | 歌词、评论、来源明确的账号写动作 | done（模块，20项测试+独立复审） | — |
 | quality-001 | 真实FLAC无损契约与安全兼容性，不伪装AAC为无损 | done（模块，19项测试+独立复审） | — |
-| integration-001 | helper路由、全部可兑现exports、导航、缓存失效、安装包/文档 | pending | 上述3项 |
+| integration-001 | helper路由、全部可兑现exports、导航、缓存失效、安装包/文档 | in-progress | 上述3项 |
 | acceptance-001 | 独立验证、只读线上验收、已支持与blocked清单 | pending | integration-001 |
 
 三个模块路径互不重叠，分别使用 git worktree；实现提交后由全新verify agent审查，blocking修复后才合并。集成单独任务，必须测试真实模块而不是只mock JSONL返回。

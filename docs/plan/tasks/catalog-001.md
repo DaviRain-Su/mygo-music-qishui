@@ -1,7 +1,7 @@
 ---
 id: catalog-001
 scope: helper/catalog
-status: ready
+status: done
 depends-on: []
 ---
 
