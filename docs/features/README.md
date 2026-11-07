@@ -30,7 +30,7 @@ Playback helper (independent): true source FLAC → lossless FLAC; AAC → MP3
 - GET `/luna/pc/me/recently-played-media`：`cursor,count,media_type,scene`；根 `media[].entity.track`、`next_cursor,has_more,total_num`。
 - POST `/luna/pc/feed/mode` body `{}`：`feed_mode_block[].feed_mode[]` 和 `feed_mode_bar.feed_mode`。情景模式 `entity.feed_scene_mode.scene_mode_id`，偏好模式 familiar/fresh。
 - POST `/luna/pc/feed/song-tab`：已有验证，body `is_first_request,played_media,is_did_first_request,feed_counts`，可按已知合同传 feed_preference。
-- POST `/luna/pc/discover` body `{first_request:false,pc_new_discover_request:true}`：根 blocks[].inner_block[].resources，包含推荐卡片与 `ranked_track.track`。`/discover/view` 已实测404，不使用。
+- POST `/luna/pc/discover` body `{}`：根 blocks[].inner_block[].resources，实际包含 discover_feed_playlist（10个歌单块）与 discover_top_song_list（3个榜单块），ranked_track.track是榜单歌曲。额外传 `pc_new_discover_request:true` 会只返回新歌单混排块，不能用于榜单页面；`/discover/view` 已实测404，不使用。
 - GET `/luna/pc/comments`：`group_id,group_type:0,cursor,count`；根 comments（id,content,count_digged,time_created,user.nickname/medium_avatar_url），count:string、cursor:string、has_more:boolean。
 - POST `/luna/pc/track_v2`：既有真实播放元数据包含 `lyric.content`, `lyric.translations.cn`, `lyric.type`；不另猜歌词端点。
 
@@ -70,7 +70,7 @@ Playback helper (independent): true source FLAC → lossless FLAC; AAC → MP3
 - mixed_collections / user playlists 如果仅有total_num，无has_more且返回条数不足total，不能伪造分页已经完成；显式报分页契约缺失。允许只在用户列表本身被接口完整返回时终止。
 - `savedAlbums` 仅从明确 album 类型收藏映射，不混入歌曲或歌单。
 - `browse` 支持 discover/charts/history/library/推荐续页 等命名空间，页面字符串内部路由，不能解析为任意上游URL。已映射但不支持的卡片种类跳过，不把视频当歌曲。
-- 情景 stations 以 mode_id 或 familiar/fresh 建立独立feed会话；played_media 最多30项、去重集合有界、每次拉取最多2个上游页。主页通过MorePage继续读取；不会每次都重置成first。
+- 已实际确认 feed_scene_mode.scene_mode_id 是 number，服务端提供45个情景模式和3个偏好。情景 stations 以 mode_id 或 familiar/fresh 建立独立feed会话；played_media 最多30项、去重集合有界、每次拉取最多2个上游页。主页通过MorePage继续读取；不会每次都重置成first。
 - 任意缺失的必需list字段不是正常空内容，应抛响应错误；明确空数组才是空结果。
 
 ## Lyrics/comments 与 Actions 模块合同
