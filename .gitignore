@@ -4,3 +4,4 @@ node_modules/
 .auth-sdk/
 .dist/
 __pycache__/
+.worktrees/
