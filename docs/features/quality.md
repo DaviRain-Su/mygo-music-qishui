@@ -25,6 +25,6 @@ TDD：先观察 lossless AAC 回退及缺少 losslessAudio 的失败，再观察
 
 ## 交付状态
 
-原实现已提交为 `54d5364`，独立审查见 `docs/plan/reviews/quality-001-01.md`，其 BLOCKED 状态保留，等待复审。本轮仅修改 helper/playback.cjs、tests/helper-playback.test.cjs 和本 handoff；修复已准备好由 orchestrator 提交，未尝试写共享 Git 元数据。
+原实现 `54d5364` 的独立审查发现截断 FLAC 可误判成功。修复提交 `e84a40a` 已通过全新独立复审，19/19聚焦测试通过，并已合并到主分支。历史阻塞已关闭；宿主集成和线上授权无损验收仍单独跟踪。
 
 集成仍须更新 index 的本地扩展名/type 验证及返回值以接受 FLAC，并通过真实 host bridge 测试；更新 ffmpeg 错误文案。未修改 index/runtime/main/protocol 或其他模块，也未宣称桌面无损播放已可用。当前测试未证明真实运行中的 ffmpeg 在25秒截止时被终止，仍需集成验证该进程截止路径。

@@ -1,7 +1,7 @@
 ---
 id: quality-001
 scope: helper/audio-and-playback
-status: ready
+status: done
 depends-on: []
 ---
 

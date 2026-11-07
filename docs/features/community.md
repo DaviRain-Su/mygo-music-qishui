@@ -107,8 +107,9 @@ Five regression tests added for review `community-001-01` first failed against
 the reviewed implementation, then passed after fixes: malformed bracket runs in
 a subprocess with a two-second deadline; structured-line translation alignment;
 object-shaped avatar URLs; caller mutation during append; and sparse/oversized
-batch rejection before writes. All original tests remain. This records local fix
-validation only; the independent review status remains unchanged pending re-review.
+batch rejection before writes. All original tests remain. Independent re-review
+of commit `db0816d` passed the offline module gate (20/20 tests). A nonblocking
+translation timestamp ordering difference is tracked in docs/plan/backlog.md.
 Only synthetic injected fixtures were used. No network, credentials or real
 account data were accessed; the account-derived read-results file was deliberately
 not read. Local source contracts and MyGo DTO declarations supplied context.

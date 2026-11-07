@@ -1,7 +1,7 @@
 ---
 id: community-001
 scope: helper/community-and-actions
-status: ready
+status: done
 depends-on: []
 ---
 
