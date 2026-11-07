@@ -1,7 +1,6 @@
 // MyGo Qishui: official browser SDK authentication runs in a private helper.
 // No unsigned-fetch fallback, no default/placeholder successful account.
-const VERSION = "0.3.0";
-const t = typeof host.t === "function" ? (text) => host.t(text) : (text) => text;
+const VERSION = "0.4.0";
 const cookie = () => host.storage.get("authBackend") === "sdk-v1" ? host.storage.get("cookie") || "" : "";
 function fail(code, message) { const error = new Error(message); error.code = code; return error; }
 function needAccount() { if (!account()) throw fail("signIn", "请先使用官方 SDK 登录汽水音乐。"); }
@@ -9,7 +8,32 @@ function needAccount() { if (!account()) throw fail("signIn", "请先使用官�
 // ---------- Private JSONL helper ----------
 let helper = null, starting = null, signingIn = false;
 const STAGES = new Set(["starting", "waiting-scan", "scanned", "verification", "verifying-account", "authenticated", "failed"]);
-const ERROR_CODES = new Set(["setup", "protocol", "busy", "network", "timeout", "cancelled", "sdk", "integrity", "response", "session", "account", "api", "verification", "unavailable", "audio", "entitlement", "preview", "ffmpeg"]);
+const ERROR_MESSAGES = {
+  input: '汽水功能参数无效。',
+  limit: '汽水数据超过处理上限。',
+  pagination: '汽水分页数据不完整或超过读取上限。',
+  'mutation-unknown': '操作可能已完成，结果未知。请先核对当前状态，不要自动重试。',
+  cache: '操作已完成，但缓存未能刷新。请核对当前状态，不要重复提交。',
+  setup: '汽水 SDK 运行时未就绪。请在插件目录运行 node helper/install.cjs；依赖将安装到独立数据目录。不要在插件目录执行 npm install/ci。',
+  protocol: '汽水辅助程序协议数据无效。',
+  busy: '已有汽水登录正在进行，请先完成或取消当前登录。',
+  network: '无法连接汽水认证服务，请检查网络。',
+  timeout: '汽水操作超时。',
+  cancelled: '汽水登录或安全验证已取消。',
+  sdk: '官方安全 SDK 未就绪或没有生成安全参数，已停止登录。',
+  integrity: '官方 SDK 文件摘要校验失败，未执行该文件。',
+  response: '汽水返回了无法识别的响应。',
+  session: '汽水尚未向本插件下发有效登录会话。',
+  account: '取得会话后仍无法验证汽水账号，本次未判定为登录成功。',
+  api: '汽水接口拒绝请求。',
+  verification: '汽水要求的官方安全验证未完成。',
+  unavailable: '当前环境无法运行汽水官方 SDK。',
+  audio: '这首歌的音频格式或授权数据暂不支持，未尝试绕过播放限制。',
+  entitlement: '当前账号没有这首歌所返回音质的可验证播放权限。',
+  preview: '服务端只提供了试听片段，当前插件不会将其作为完整版播放。',
+  ffmpeg: '音频处理失败。请确认 ffmpeg 支持 AAC、libmp3lame 和 FLAC 解码。',
+};
+const ERROR_CODES = new Set(Object.keys(ERROR_MESSAGES));
 function diagnostic(stage, error) {
   const info = { version: VERSION, backend: "official-sdk", stage, at: new Date().toISOString() };
   if (Number.isInteger(error?.apiCode)) info.errorCode = error.apiCode;
@@ -20,19 +44,22 @@ function diagnostic(stage, error) {
 function helperError(value) {
   const code = ERROR_CODES.has(value?.code) ? value.code : "protocol";
   const setup = ["setup", "integrity", "unavailable", "ffmpeg"].includes(code);
-  const message = ERROR_CODES.has(value?.code) && typeof value.message === "string" && value.message.length <= 4000
-    ? value.message : "汽水 SDK 辅助程序通信失败，请检查安装和进程权限。";
+  let message = ERROR_MESSAGES[code];
+  if (Number.isInteger(value?.apiCode)) message += `（错误码 ${value.apiCode}）`;
+  const confirmed = ["mutation-unknown", "api", "cache"].includes(code) && Number.isSafeInteger(value?.confirmed) && value.confirmed >= 0 && value.confirmed <= 100;
+  if (confirmed) message += `（已确认 ${value.confirmed} 项）`;
   const error = fail(setup ? "setup" : "qishui-" + code, message);
   if (Number.isInteger(value?.apiCode)) error.apiCode = value.apiCode;
   if (Number.isInteger(value?.httpStatus)) error.httpStatus = value.httpStatus;
   if (["metadata", "entitlement", "download", "decrypt", "encode", "verify"].includes(value?.stage)) error.stage = value.stage;
+  if (confirmed) error.confirmed = value.confirmed;
   return error;
 }
 function stopHelper(client, error) {
   if (client.closed) return;
   client.closed = true;
   if (helper === client) helper = null;
-  for (const entry of client.pending.values()) { clearTimeout(entry.timer); entry.reject(error); }
+  for (const entry of client.pending.values()) { clearTimeout(entry.timer); entry.reject(entry.mutation ? helperError({code:"mutation-unknown"}) : error); }
   client.pending.clear();
   try { client.process.kill(); } catch {}
 }
@@ -61,7 +88,7 @@ function send(client, op, params = {}, timeout = 40000, onPrompt) {
     if (client.closed) { reject(fail("qishui-helper", "汽水 SDK 辅助程序已停止。")); return; }
     const id = ++client.nextId;
     const timer = setTimeout(() => stopHelper(client, fail("qishui-timeout", "汽水 SDK 辅助程序等待超时，已停止本次操作。")), timeout);
-    client.pending.set(id, { resolve, reject, timer, onPrompt });
+    client.pending.set(id, { resolve, reject, timer, onPrompt, mutation: op === "catalog" && ["postComment","like","savePlaylist","saveAlbum","createPlaylist","addToPlaylist","played"].includes(params.method) });
     try { client.process.write(JSON.stringify({ id, op, params }) + "\n"); }
     catch { stopHelper(client, fail("qishui-helper", "无法向汽水 SDK 辅助程序发送请求。")); }
   });
@@ -131,100 +158,34 @@ export async function signOut() {
   try { if (helper || cookie()) await send(await ensureHelper(), "signOut"); }
   finally { host.storage.remove("cookie"); host.storage.remove("account"); host.storage.remove("authBackend"); }
 }
-async function api(path, params, body) {
+async function catalog(method, args = {}) {
   needAccount();
-  return send(await ensureHelper(), "request", { path, params: params || {}, ...(body !== undefined ? { body } : {}) });
+  return send(await ensureHelper(), "catalog", { method, args }, 28000);
 }
-// The helper, not this sandbox, owns stable SDK device/version parameters.
-const lunaParams = (extra) => extra || {};
-
-// ---------- Catalog mappings (still require live catalog/playback verification) ----------
-const textOf = (v) => (typeof v === "string" ? v : v?.name || v?.title || "");
-function artistsOf(raw) {
-  const links = raw?.artist_links || raw?.artists || [];
-  const out = links.map((a) => ({ id: String(a?.id || a?.artist_id || ""), name: textOf(a) })).filter((a) => a.name);
-  if (!out.length) { const name = textOf(raw?.author) || textOf(raw?.artist_name); if (name) out.push({ id: "", name }); }
-  return out;
-}
-function imageOf(value) {
-  if (typeof value === "string") return /^https?:\/\//.test(value) ? value : "";
-  if (!value || typeof value !== "object") return "";
-  let url = (value.urls || value.url_list || [value.url]).find((s) => typeof s === "string" && /^https?:\/\//.test(s)) || "";
-  if (url && value.uri && !url.includes(value.uri)) url += value.uri;
-  return url && !url.includes("~") ? url + "~c5_375x375.jpg" : url;
-}
-function toTrack(raw, index, fallbackAlbum) {
-  const entity = raw?.entity || raw?.data || raw;
-  const media = entity?.media || entity || {};
-  const wrapper = entity?.track_wrapper || media?.track_wrapper || raw?.track_wrapper;
-  const track = wrapper?.track || media?.track_entity || raw?.track_entity || media?.track || raw?.track || entity;
-  if (/^(playlist|album|artist|user|video|mix|radio)$/.test(raw?.type || "")) return null;
-  const base = track?.base_info || raw?.base_info || raw?.base || track || {};
-  const display = track?.display_info || raw?.display_info || media?.display_info || {};
-  const related = track?.related_info || raw?.related_info || media?.related_info || {};
-  const id = String(base.id || base.track_id || track?.id || track?.track_id || media.id || media.track_id || raw?.id || raw?.track_id || raw?.media_id || raw?.item_id || "");
-  const name = textOf(base.name) || textOf(base.title) || textOf(track?.name) || textOf(media.name) || textOf(raw?.name) || textOf(raw?.title);
-  if (!id || !name) return null;
-  const albumLink = related.album_link || related.album || base.album || display.album || {};
-  const albumName = textOf(albumLink.name) || textOf(albumLink.title) || textOf(base.album_name);
-  const cover = imageOf(display.cover_url || display.url_cover || base.cover_url || albumLink.cover_url || albumLink.url_cover || track?.cover_url || media.cover_url || raw?.cover_url);
-  return {
-    id, name, artists: artistsOf(related.artist_links || related.artists ? related : base.artist_links || base.artists ? base : raw),
-    album: { id: String(albumLink.id || ""), name: albumName, imageUrl: cover },
-    duration: Number(base.duration_ms || base.duration || track?.duration_ms || track?.duration || media.duration || raw?.duration || 0),
-    imageUrl: cover, albumId: String(albumLink.id || fallbackAlbum || ""),
-  };
-}
-function toTracks(list, fallbackAlbum) { return (list || []).map((item, i) => toTrack(item, i, fallbackAlbum)).filter(Boolean); }
-function deepFind(node, key, out = []) {
-  if (Array.isArray(node)) for (const item of node) deepFind(item, key, out);
-  else if (node && typeof node === "object") for (const k of Object.keys(node)) { if (k === key) out.push(node[k]); else deepFind(node[k], key, out); }
-  return out;
-}
-function tracksFrom(payload) {
-  const data = payload?.data ?? payload ?? {};
-  const groups = data.result_groups || data.resultGroups || [];
-  let raw = [];
-  for (const g of groups) { const items = g.data || g.items || g.list; if (Array.isArray(items)) raw.push(...items); }
-  if (!raw.length) raw = data.items || data.media_list || data.mediaList || data.tracks || [];
-  if (!raw.length) raw = deepFind(data, "track") || [];
-  return toTracks(raw);
-}
-export async function search({ query, kind, offset }) {
-  if (kind !== "tracks") return { [kind]: [], more: false };
-  needAccount();
-  const res = await api("/luna/pc/search/track", lunaParams({ q: query, cursor: String(offset ?? 0), count: 20, search_method: "input" }));
-  const tracks = tracksFrom(res); return { tracks, more: tracks.length >= 20 };
-}
-export async function suggest() { return []; }
-export async function home() {
-  needAccount();
-  const tracks = tracksFrom(await api("/luna/pc/feed/song-tab", {}, {
-    is_first_request: true, played_media: [], is_did_first_request: false, feed_counts: { mix_session_count: 1 },
-  }));
-  return { title: t("Home"), sections: tracks.length ? [{ title: t("Recommended for you"), tracks }] : [] };
-}
-export async function playlists() {
-  if (!cookie()) return [];
-  const res = await api("/luna/pc/user/playlist", lunaParams({ user_id: account().id, cursor: 0, count: 30 }));
-  const data = res?.data ?? res ?? {}, list = data.list || data.playlists || [];
-  if (!Array.isArray(list)) return [];
-  return list.map((p) => ({ id: String(pPlaylistId(p)), name: textOf(p.name || p.title || p.list_name), trackCount: Number(p.track_count || p.song_count || 0), mine: Boolean(p.is_own || p.own) })).filter((p) => p.id && p.name);
-}
-function pPlaylistId(p) { return p.playlist_id || p.id || p.collection_id || ""; }
-export async function playlist({ id }) {
-  needAccount();
-  const res = await api("/luna/pc/playlist/detail", lunaParams({ playlist_id: id, cursor: 0, count: 100 }));
-  const data = res?.data ?? {}, info = data.playlist || data.info || {};
-  return { id, name: textOf(info.name || info.title), tracks: tracksFrom(res), trackCount: Number(info.track_count || 0) };
-}
-export async function liked({ offset }) {
-  needAccount();
-  const tracks = tracksFrom(await api("/luna/pc/me/collection/mixed", lunaParams({ cursor: offset ?? 0, count: 30 })));
-  return { tracks, more: tracks.length >= 30 };
+export function home(args) { return catalog("home", args); }
+export function browse(args) { return catalog("browse", args); }
+export function search(args) { return catalog("search", args); }
+export function playlists(args) { return catalog("playlists", args); }
+export function playlist(args) { return catalog("playlist", args); }
+export function liked(args) { return catalog("liked", args); }
+export function isLiked(args) { return catalog("isLiked", args); }
+export function savedAlbums(args) { return catalog("savedAlbums", args); }
+export function recent(args) { return catalog("recent", args); }
+export function stations(args) { return catalog("stations", args); }
+export function stationNext(args) { return catalog("stationNext", args); }
+export function lyrics(args) { return catalog("lyrics", args); }
+export function comments(args) { return catalog("comments", args); }
+export function postComment(args) { return catalog("postComment", args); }
+export function like(args) { return catalog("like", args); }
+export function savePlaylist(args) { return catalog("savePlaylist", args); }
+export function saveAlbum(args) { return catalog("saveAlbum", args); }
+export function createPlaylist(args) { return catalog("createPlaylist", args); }
+export function played(args) { return catalog("played", args); }
+export function addToPlaylist({id, trackIds}) {
+  return catalog("addToPlaylist", {playlistId:id, ids:trackIds});
 }
 
-// ---------- Playback: the helper resolves rights, decrypts authorized audio and prepares MP3 ----------
+// ---------- Playback: the helper resolves rights, decrypts authorized audio and prepares MP3/FLAC ----------
 export async function stream({ id, quality = "standard" }) {
   needAccount();
   let result;
@@ -241,10 +202,10 @@ export async function stream({ id, quality = "standard" }) {
   const expected = host.dataDir.replace(/\/$/, "") + "/auth-sdk/audio-cache/";
   const file = decodeURIComponent(url.pathname);
   if (url.protocol !== "file:" || url.hostname || url.search || url.hash || !file.startsWith(expected) ||
-      !/^run-[A-Za-z0-9]+\/[a-f0-9]{32}\.mp3$/.test(file.slice(expected.length)) ||
-      result.type !== "mp3" || !Number.isSafeInteger(result.size) || result.size <= 0) {
+      !/^run-[A-Za-z0-9]+\/[a-f0-9]{32}\.(mp3|flac)$/.test(file.slice(expected.length)) ||
+      !["mp3", "flac"].includes(result.type) || !file.endsWith("." + result.type) || !Number.isSafeInteger(result.size) || result.size <= 0) {
     throw fail("unavailable", "汽水辅助程序返回了无法验证的音频文件。");
   }
   host.storage.set("playbackDiagnostic", { version: VERSION, status: "prepared", size: result.size });
-  return { url: url.href, type: "mp3", size: result.size, quality: result.quality, bitRate: result.bitRate };
+  return { url: url.href, type: result.type, size: result.size, quality: result.quality, bitRate: result.bitRate };
 }
