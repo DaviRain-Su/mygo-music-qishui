@@ -15,12 +15,12 @@ function wrapKey(hex) {
 const u32 = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
 const box = (type, ...parts) => { const data = Buffer.concat(parts); return Buffer.concat([u32(data.length + 8), Buffer.from(type), data]); };
 const full = (type, ...parts) => box(type, Buffer.alloc(4), ...parts);
-function encryptedFixture() {
+function encryptedFixture(format = 'mp4a') {
   const samples = [Buffer.from('first-audio-sample'), Buffer.from('second-audio-sample')];
   const ivs = [Buffer.alloc(8, 1), Buffer.alloc(8, 2)];
   const enc = samples.map((sample, i) => { const cipher = crypto.createCipheriv('aes-128-ctr', key, Buffer.concat([ivs[i], Buffer.alloc(8)])); return Buffer.concat([cipher.update(sample), cipher.final()]); });
-  const sinf = box('sinf', box('frma', Buffer.from('mp4a')), full('schm', Buffer.from('cenc'), u32(65536)));
-  const stsd = full('stsd', u32(1), box('enca', Buffer.alloc(28), sinf));
+  const sinf = box('sinf', box('frma', Buffer.from(format)), full('schm', Buffer.from('cenc'), u32(65536)));
+  const stsd = full('stsd', u32(1), box('enca', Buffer.alloc(28), ...(format === 'fLaC' ? [full('dfLa', Buffer.from([128, 0, 0, 34]), Buffer.alloc(34))] : []), sinf));
   const stsz = full('stsz', u32(0), u32(2), ...samples.map(s => u32(s.length)));
   const stsc = full('stsc', u32(1), u32(1), u32(1), u32(1));
   const senc = full('senc', u32(2), ...ivs);
@@ -87,4 +87,35 @@ test('audio URLs and encrypted formats are validated before download', () => {
 test('a preview is not returned as a full-length stream', () => {
   const p = payload([stream('medium')], { medium: free }); p.track_player.video_model = JSON.stringify({ video_duration: 30, video_list: [stream('medium')] });
   assert.throws(() => selectAudio(p, { isVip: false }));
+});
+
+test('lossless never silently selects AAC and unknown rights stay denied', () => {
+  assert.throws(() => selectAudio(payload([stream('medium')], { medium: free }), { quality: 'lossless' }));
+  const item = stream('lossless'); item.video_meta.codec_type = 'flac';
+  assert.equal(selectAudio(payload([item], { lossless: free }), { quality: 'lossless' }).type, 'm4a');
+  for (const permission of [vip, {}, { play_detail: { need_vip: false } }, { play_detail: { need_vip: false, need_purchase: true } }]) {
+    assert.throws(() => selectAudio(payload([item], { lossless: permission }), { quality: 'lossless' }), { code: 'entitlement' });
+  }
+});
+
+test('lossless rejects AAC container evidence even with FLAC metadata claims', () => {
+  const { losslessAudio } = require('../helper/audio.cjs');
+  assert.throws(() => losslessAudio(encryptedFixture().bytes, key), { code: 'audio' });
+});
+
+
+test('CENC FLAC preserves metadata and samples and rejects corrupt evidence', () => {
+  const { losslessAudio } = require('../helper/audio.cjs');
+  const fixture = encryptedFixture('fLaC');
+  const output = losslessAudio(fixture.bytes, key);
+  assert.deepEqual(output.subarray(42), Buffer.concat(fixture.samples));
+  assert.equal(output.subarray(0, 4).toString(), 'fLaC');
+  for (const [type, relative, value] of [
+    ['frma', 4, 0], ['dfLa', 4, 1], ['senc', 4, 2], ['senc', 8, 3],
+    ['stco', 16, fixture.offsets[0]], ['stsz', 12, 200001], ['schm', 8, 0],
+  ]) {
+    const bad = Buffer.from(fixture.bytes); bad.writeUInt32BE(value, bad.indexOf(Buffer.from(type)) + relative);
+    assert.throws(() => losslessAudio(bad, key), { code: 'audio' });
+  }
+  assert.throws(() => losslessAudio(Buffer.concat([Buffer.from('fLaC'), Buffer.alloc(40)])), { code: 'audio' });
 });

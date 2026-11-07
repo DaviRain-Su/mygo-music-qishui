@@ -51,27 +51,30 @@ function selectAudio(payload, { quality = 'standard', isVip = false } = {}) {
   if (!model || !Array.isArray(model.video_list) || model.video_list.length > 50 ||
       ![0, 10].includes(Number(model.status || 0)) || (Number(model.status) === 10 && model.message !== 'success')) return reject();
   if (Number(model.video_duration) > 0 && Number(track.duration) > 0 && Number(model.video_duration) * 1000 + 5000 < Number(track.duration)) throw fault('preview');
-  const ranks = quality === 'standard' ? ['medium', 'higher', 'highest'] : ['highest', 'higher', 'medium'];
+  const ranks = quality === 'lossless' ? ['lossless', 'sq', 'highest', 'higher', 'medium'] : quality === 'standard' ? ['medium', 'higher', 'highest'] : ['highest', 'higher', 'medium'];
   const options = model.video_list.filter(item => {
     const meta = item.video_meta || {}, permission = rights[meta.quality]?.play_detail;
-    return ranks.includes(meta.quality) && ['aac', 'mp4a'].includes(String(meta.codec_type).toLowerCase()) &&
-      ['m4a', 'mp4'].includes(meta.vtype) && permission &&
+    return ranks.includes(meta.quality) && (quality === 'lossless' ? ['flac'] : ['aac', 'mp4a']).includes(String(meta.codec_type).toLowerCase()) &&
+      (quality === 'lossless' ? ['m4a', 'mp4', 'flac'] : ['m4a', 'mp4']).includes(meta.vtype) && permission &&
       (permission.need_vip === false || (permission.need_vip === true && isVip)) && permission.need_purchase === false;
   }).sort((a, b) => ranks.indexOf(a.video_meta.quality) - ranks.indexOf(b.video_meta.quality));
-  if (!options.length) throw fault('entitlement');
+  if (!options.length) {
+    if (quality === 'lossless' && !model.video_list.some(item => String(item.video_meta?.codec_type).toLowerCase() === 'flac')) return reject();
+    throw fault('entitlement');
+  }
   const item = options[0], encryption = item.encrypt_info || {};
   if (encryption.encrypt && encryption.encryption_method !== 'cenc-aes-ctr') return reject();
   return {
     url: audioURL(item.main_url), key: encryption.encrypt ? playbackKey(encryption.spade_a) : null,
     quality: item.video_meta.quality, duration: Number(track.duration) || 0,
-    size: Number(item.video_meta.size) || 0, type: 'm4a',
+    size: Number(item.video_meta.size) || 0, type: item.video_meta.vtype === 'flac' ? 'flac' : 'm4a',
   };
 }
 
 // Non-fragmented ISO BMFF CENC audio: preserve file offsets and decrypt at sample boundaries.
-function decryptAudio(input, key) {
-  if (!Buffer.isBuffer(input) || !input.length || input.length > MAX_AUDIO_BYTES || !Buffer.isBuffer(key) || key.length !== 16) return reject();
-  const output = Buffer.from(input);
+function parseAudio(input, key, lossless = false) {
+  if (!Buffer.isBuffer(input) || !input.length || input.length > MAX_AUDIO_BYTES || (key !== null && (!Buffer.isBuffer(key) || key.length !== 16))) return reject();
+  const output = Buffer.from(input); let flacOutput;
   function boxes(start, end) {
     const result = [];
     for (let at = start; at < end;) {
@@ -103,11 +106,28 @@ function decryptAudio(input, key) {
     const stbl = find(children(find(mdiaChildren, 'minf')), 'stbl'), tables = children(stbl);
     const stsd = find(tables, 'stsd');
     if (u32(stsd, 4) !== 1) return reject();
-    const entry = find(boxes(stsd.data + 8, stsd.end), 'enca');
+    const entries = boxes(stsd.data + 8, stsd.end);
+    if (entries.length !== 1) return reject();
+    const entry = entries[0];
+    if (entry.type !== (key ? 'enca' : 'fLaC')) return reject();
     if (entry.data + 28 > entry.end || input.readUInt16BE(entry.data + 8) !== 0) return reject();
-    const sinf = find(boxes(entry.data + 28, entry.end), 'sinf');
-    const frma = find(children(sinf), 'frma');
-    if (frma.data + 4 > frma.end || input.toString('ascii', frma.data, frma.data + 4) !== 'mp4a') return reject();
+    const extensions = boxes(entry.data + 28, entry.end);
+    let sinf, format = entry.type;
+    if (key) {
+      sinf = find(extensions, 'sinf');
+      const protection = children(sinf), frma = find(protection, 'frma'), schm = find(protection, 'schm');
+      if (frma.end - frma.data !== 4 || u32(schm, 0) !== 0 ||
+          schm.end - schm.data !== 12 || input.toString('ascii', schm.data + 4, schm.data + 8) !== 'cenc') return reject();
+      format = input.toString('ascii', frma.data, frma.end);
+    }
+    if (format !== (lossless ? 'fLaC' : 'mp4a')) return reject();
+    let metadata;
+    if (lossless) {
+      const dfla = find(extensions, 'dfLa');
+      if (u32(dfla, 0) !== 0) return reject();
+      metadata = input.subarray(dfla.data + 4, dfla.end);
+      validateFlacMetadata(metadata, true);
+    }
     const stsz = find(tables, 'stsz'), sampleSize = u32(stsz, 4), count = u32(stsz, 8);
     if (!count || count > MAX_SAMPLES) return reject();
     const sizes = Array.from({ length: count }, (_, i) => sampleSize || u32(stsz, 12 + i * 4));
@@ -118,10 +138,12 @@ function decryptAudio(input, key) {
     if (runs[0].first !== 1 || runs.some((r, i) => !r.samples || r.index !== 1 || (i && r.first <= runs[i - 1].first))) return reject();
     const chunks = tables.find(box => box.type === 'stco') || find(tables, 'co64'), chunkCount = u32(chunks, 4);
     if (!chunkCount || chunkCount > count) return reject();
-    const senc = tables.find(box => box.type === 'senc') || find(moovChildren, 'senc');
-    if (u32(senc, 0) !== 0 || u32(senc, 4) !== count) return reject();
-    const ivSize = (senc.end - senc.data - 8) / count;
+    const senc = key ? (tables.find(box => box.type === 'senc') || find(moovChildren, 'senc')) : null;
+    if (key && (u32(senc, 0) !== 0 || u32(senc, 4) !== count)) return reject();
+    const ivSize = key ? (senc.end - senc.data - 8) / count : 8;
     if (ivSize !== 8 && ivSize !== 16) return reject();
+    if (runs.some(r => r.first > chunkCount)) return reject();
+    const clearSamples = [];
     let sample = 0, run = 0, previousEnd = 0;
     for (let chunk = 0; chunk < chunkCount; chunk++) {
       while (run + 1 < runs.length && runs[run + 1].first <= chunk + 1) run++;
@@ -135,17 +157,46 @@ function decryptAudio(input, key) {
         if (sample >= count) return reject();
         const size = sizes[sample];
         if (offset < previousEnd || !mdats.some(box => offset >= box.data && offset + size <= box.end)) return reject();
-        const iv = Buffer.alloc(16); input.copy(iv, 0, senc.data + 8 + sample * ivSize, senc.data + 8 + (sample + 1) * ivSize);
-        const decipher = crypto.createDecipheriv('aes-128-ctr', key, iv);
-        const clear = Buffer.concat([decipher.update(input.subarray(offset, offset + size)), decipher.final()]);
+        let clear = input.subarray(offset, offset + size);
+        if (key) {
+          const iv = Buffer.alloc(16); input.copy(iv, 0, senc.data + 8 + sample * ivSize, senc.data + 8 + (sample + 1) * ivSize);
+          const decipher = crypto.createDecipheriv('aes-128-ctr', key, iv);
+          clear = Buffer.concat([decipher.update(input.subarray(offset, offset + size)), decipher.final()]);
+        }
+        if (lossless) clearSamples.push(clear);
         clear.copy(output, offset); previousEnd = offset + size; offset += size;
       }
     }
     if (sample !== count) return reject();
-    output.write('mp4a', entry.at + 4, 'ascii');
-    for (const box of [sinf, senc, ...tables.filter(box => ['saio', 'saiz'].includes(box.type))]) output.write('free', box.at + 4, 'ascii');
+    if (lossless) flacOutput = Buffer.concat([Buffer.from('fLaC'), metadata, ...clearSamples]);
+    output.write(format, entry.at + 4, 'ascii');
+    for (const box of [sinf, senc, ...tables.filter(box => ['saio', 'saiz'].includes(box.type))].filter(Boolean)) output.write('free', box.at + 4, 'ascii');
   }
   if (audioTracks !== 1) return reject();
-  return output;
+  return lossless ? flacOutput : output;
 }
-module.exports = { MAX_AUDIO_BYTES, playbackKey, decryptAudio, selectAudio, audioURL };
+// Require a complete metadata chain beginning with a 34-byte STREAMINFO block.
+function validateFlacMetadata(data, exact = false) {
+  let at = 0, first = true;
+  for (let blocks = 0; blocks < 128; blocks++) {
+    if (at + 4 > data.length) return reject();
+    const kind = data[at] & 127, last = data[at] & 128, size = data.readUIntBE(at + 1, 3);
+    if ((first && (kind !== 0 || size !== 34)) || (!first && kind === 0) || kind === 127 || at + 4 + size > data.length) return reject();
+    at += 4 + size; first = false;
+    if (last) { if (exact ? at !== data.length : at >= data.length) return reject(); return at; }
+  }
+  return reject();
+}
+function decryptAudio(input, key) {
+  if (!Buffer.isBuffer(key) || key.length !== 16) return reject();
+  return parseAudio(input, key);
+}
+function losslessAudio(input, key = null) {
+  if (!Buffer.isBuffer(input) || !input.length || input.length > MAX_AUDIO_BYTES) return reject();
+  if (!key && input.subarray(0, 4).toString('ascii') === 'fLaC') {
+    validateFlacMetadata(input.subarray(4));
+    return Buffer.from(input);
+  }
+  return parseAudio(input, key, true);
+}
+module.exports = { MAX_AUDIO_BYTES, losslessAudio, playbackKey, decryptAudio, selectAudio, audioURL };
