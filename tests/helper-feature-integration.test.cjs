@@ -39,7 +39,7 @@ async function bridge(t, api) {
  const storage = new Map([['cookie','sessionid=synthetic'],['account',{id:'u1',name:'User'}],['authBackend','sdk-v1']]);
  const requests=[],timers=[],readers=[],lines=[];let closed=false;
  const proc={write(line){const r=parseRequest(line);requests.push(r);Promise.resolve().then(async()=>{
-  try {const result=r.op==='hello'?{protocol:1,version:'0.4.5'}:r.op==='catalog'?await service.dispatch(r.params):null;emit({id:r.id,ok:true,result});}
+  try {const result=r.op==='hello'?{protocol:1,version:'0.4.6'}:r.op==='catalog'?await service.dispatch(r.params):null;emit({id:r.id,ok:true,result});}
   catch(e){emit({id:r.id,ok:false,error:publicError(e)});}
  });},readLine(){return lines.length?Promise.resolve(lines.shift()):closed?Promise.resolve(null):new Promise(r=>readers.push(r));},kill(){closed=true;for(const r of readers.splice(0))r(null);}};
  function emit(v){const line=encodeResponse(v);readers.length?readers.shift()(line):lines.push(line);}

@@ -15,6 +15,7 @@ const MESSAGES = Object.freeze({
   timeout: '汽水操作超时。',
   cancelled: '汽水登录或安全验证已取消。',
   sdk: '官方安全 SDK 未就绪或没有生成安全参数，已停止登录。',
+  native: '未找到官方汽水音乐桌面版提供的签名模块。请安装官方汽水音乐 App（或用环境变量 MYGO_QISHUI_SDK_APP 指向其安装位置），本插件会缓存该模块供本机使用。',
   integrity: '官方 SDK 文件摘要校验失败，未执行该文件。',
   response: '汽水返回了无法识别的响应。',
   session: '汽水尚未向本插件下发有效登录会话。',

@@ -1,0 +1,16 @@
+{
+  "name": "mygo-music-qishui",
+  "version": "0.5.2",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node scripts/build.mjs && node scripts/build-runtime.mjs",
+    "check": "node scripts/build.mjs --check",
+    "test": "npm run check && node scripts/test-native.mjs && go -C vendor/lane128-qishui/native/worker test ./...",
+    "test:native": "go -C vendor/lane128-qishui/native/worker test -race ./...",
+    "package": "node scripts/package.mjs"
+  },
+  "devDependencies": { "esbuild": "0.25.12", "fflate": "0.8.3" }
+}

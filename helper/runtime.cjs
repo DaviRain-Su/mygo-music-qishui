@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const { loadRuntime } = require('./dependencies.cjs');
 const { ensureAssets, ASSETS } = require('./assets.cjs');
 const { fault, apiURL } = require('./protocol.cjs');
+const NATIVE = require('./native.cjs');
 const { runLogin, hasSession } = require('./auth-flow.cjs');
 const { Features, featureContext } = require('./features.cjs');
 const { Playback } = require('./playback.cjs');
@@ -217,13 +218,9 @@ class Runtime {
   loadNative() {
     if (this.nativeLoaded) return this.native;
     this.nativeLoaded = true;
-    // This is the user's installed vendor module, not a binary distributed by this plugin.
-    if (process.platform === 'darwin' && process.arch === 'arm64') {
-      try {
-        const sdk = require('/Applications/汽水音乐.app/Contents/Resources/app.asar.unpacked/bdms.node');
-        if (typeof sdk.init === 'function' && typeof sdk.generateHttpSignatureHeaders === 'function') { sdk.init({ deviceId: this.identity.deviceId }); this.native = sdk; }
-      } catch { this.native = null; }
-    }
+    // Discovered from the user's installed official app, then cached and hash-checked
+    // in private app data. This is a vendor module, not a binary distributed by this plugin.
+    this.native = NATIVE.resolveNative({ dataDir: this.dataDir, deviceId: this.identity.deviceId });
     return this.native;
   }
   async api(pathname, params = {}, body, signal) {
@@ -241,14 +238,17 @@ class Runtime {
       os_version: process.platform === 'darwin' ? 'macOS' : 'Windows 11',
     };
     for (const [key, value] of Object.entries(common)) url.searchParams.set(key, value);
-    const sdk = this.loadNative(); if (!sdk) throw fault('setup');
+    const sdk = this.loadNative();
+    if (!sdk) throw fault(NATIVE.SUPPORTED ? 'native' : 'unavailable');
     const ua = 'LunaPC/' + APP_VERSION, text = body === undefined ? null : JSON.stringify(body);
     const lines = ['user-agent\r\n' + ua];
     if (text) lines.push('X-SS-STUB\r\n' + crypto.createHash('md5').update(text).digest('hex').toUpperCase());
     const signature = String(sdk.generateHttpSignatureHeaders(url.href, lines.join('\r\n'))).split('\r\n').filter(Boolean);
     const headers = { 'User-Agent': ua, Cookie: await this.cookieHeader(), ...(text ? { 'Content-Type': 'application/json; charset=utf-8' } : {}) };
     for (let index = 0; index + 1 < signature.length; index += 2) if (/^x-[a-z0-9-]+$/i.test(signature[index])) headers[signature[index]] = signature[index + 1];
-    if (!Object.keys(headers).some(k => /^x-(helios|medusa)$/i.test(k))) throw fault('sdk');
+    // The gate is "the vendor SDK produced security parameters itself", not a specific
+    // generation: official SDK generations so far emit x-helios, x-medusa or x-neptune.
+    if (!Object.keys(headers).some(k => /^x-[a-z0-9-]+$/i.test(k))) throw fault('sdk');
     signal?.throwIfAborted();
     let response;
     try { response = await fetch(url, { method: text ? 'POST' : 'GET', headers, body: text, redirect: 'error', signal: signal || AbortSignal.timeout(20000) }); }

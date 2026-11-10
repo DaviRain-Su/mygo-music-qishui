@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
-"""Build a code-only MyGo plugin zip. No npm dependency, SDK or account data is included."""
+"""Package a plugin; native manifests use the complete native build entry."""
 import argparse
 import json
 import pathlib
+import shutil
 import stat
+import subprocess
 import zipfile
+
+
+def native_manifest(root):
+    manifest = json.loads((pathlib.Path(root) / 'plugin.json').read_text())
+    programs = manifest.get('permissions', {}).get('process', [])
+    return isinstance(programs, list) and any(
+        isinstance(program, str) and program.startswith('bin/qishui-helper-') for program in programs
+    )
 
 
 def package_files(root):
@@ -35,6 +45,16 @@ def package_files(root):
 
 def build_package(root, output):
     root, output = pathlib.Path(root).resolve(), pathlib.Path(output).absolute()
+    if native_manifest(root):
+        node = shutil.which('node')
+        if not node:
+            raise RuntimeError('Native packaging needs Node on the development machine; no Node is needed to run the plugin.')
+        subprocess.run([node, str(root / 'scripts/package.mjs'), '--output', str(output)], cwd=root, check=True)
+        with zipfile.ZipFile(output) as archive:
+            for name in ('bin/qishui-helper-darwin-arm64', 'runtime/native/qishui-sign', 'runtime/native/bdms.node', 'runtime/native/libMetaSecML.dylib'):
+                if ((archive.getinfo(name).external_attr >> 16) & 0o111) == 0:
+                    raise ValueError(f'Missing executable native component: {name}')
+            return len(archive.infolist())
     files = package_files(root)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + '.tmp')
@@ -58,9 +78,12 @@ def main():
     parser.add_argument('--output', type=pathlib.Path)
     args = parser.parse_args()
     version = json.loads((args.source / 'plugin.json').read_text())['version']
-    output = args.output or args.source / '.dist' / f'plugin-qishui-{version}.zip'
+    native = native_manifest(args.source)
+    suffix = '-darwin-arm64' if native else ''
+    output = args.output or args.source / '.dist' / f'plugin-qishui-{version}{suffix}.zip'
     count = build_package(args.source, output)
-    print(f'{output}: {count} code files, {output.stat().st_size} bytes; no runtime dependencies')
+    kind = 'complete native runtime' if native else 'legacy code-only package'
+    print(f'{output}: {count} files, {output.stat().st_size} bytes; {kind}')
 
 
 if __name__ == '__main__':

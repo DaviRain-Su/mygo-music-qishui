@@ -1,6 +1,67 @@
 # 汽水音乐 · MyGo Music 插件
 
-实验性的汽水音乐音源，适用于 [MyGo Music](https://github.com/egoist/mygo-music) 0.1.7+。
+实验性的汽水音乐音源，当前原生版适用于 [MyGo Music](https://github.com/egoist/mygo-music) **0.1.22+ / macOS arm64**。
+
+## 0.5.2：原生运行与个性推荐
+
+在 MyGo → Settings → Plugins → **+** 导入
+`plugin-qishui-0.5.2-darwin-arm64.zip`，允许插件启动自带的辅助程序，然后登录。
+**无需安装 Node/npm、Electron、FFmpeg 或汽水桌面版，无需环境变量或安装脚本。**
+更新后完全退出并重新打开 MyGo。
+
+本版恢复个性推荐优先的首页、持续播放入口与音乐封面，
+同时修复源码文件夹导入后缺少 `bin/`、`runtime/` 的问题。
+开发者执行 `npm run build` 或 `npm run package` 后，源码根目录会保留完整原生输出，
+可按文件夹导入；未经构建的源码目录不能直接使用。普通安装请选择上面的完整 ZIP。
+旧的 `python3 scripts/package.py` 对原生版也转到完整打包流程，不再生成缺失组件的代码包。
+
+扫码、账户验证和 API 请求使用 MyGo 的 JS 宿主；Go/C++ 辅助程序负责固定
+3.7.0 官方组件的离线签名与授权音频处理。AAC-LC 使用 M4A，FLAC 直接输出，
+由 MyGo 解码。预览、无权益及不支持的音频格式会报错，不绕过服务限制。
+服务要求额外安全验证时，按提示在官方 App 完成后重试。
+
+保留首页、发现、榜单、喜欢、最近播放、电台、收藏专辑及歌单操作，增加听歌模式。
+首页先展示当前账号的推荐歌曲，以及「猜你喜欢／熟悉／新鲜」持续播放入口，
+再展示情景模式和探索内容。模式使用对应推荐歌曲的专辑封面，不将模式 Logo 放大成封面。
+账号 Cookie 只由宿主保存，传入签名 worker 的
+会话只含匿名设备 ID。真实写操作仅在用户主动触发时发送。
+
+插件 ID 保持 `qishui`。已有旧版 Cookie 会先由服务验证，成功后迁移；
+失败可重新扫码。旧账号字段、`auth-sdk` 和 `sdk-runtime` 目录不删除，
+新运行包不再依赖它们。退出会阻止旧 Cookie 被重新迁移。
+
+本实现复用固定上游 [lane128/mygo-music-qishui](https://github.com/lane128/mygo-music-qishui)
+v1.0.11，保留对应源码及许可证。第三方官方原生组件的来源和许可边界见 [NOTICE](NOTICE.md)。
+不把上游的测试结论视作本项目实际扫码、播放或试听通过；本项目验收记录见
+[原生版审查记录](docs/native-runtime/07-review-report.md)。
+
+开发构建（这些工具只在开发机使用）：
+
+```sh
+npm ci
+npm run build
+npm test
+npm run test:native
+npm run package
+# 输出 .dist/plugin-qishui-0.5.2-darwin-arm64.zip
+```
+
+构建需 Node 22+、Go 1.27+ 和 Apple C++ 工具链。构建时下载固定官方归档并核验
+归档和逐文件 SHA-256；安装包运行时不下载程序。只交付已验证的 macOS arm64 包。
+根目录 `helper/*.cjs`、`tests/` 与下列旧文档保留为历史源码，不进入新运行包。
+
+## 旧版历史（0.4.x）
+
+**以下内容记录旧架构；其中 Node/Electron/FFmpeg 安装方法不适用于 0.5.x。**
+
+## 0.4.6：签名模块的发现、缓存与报错拆分
+
+API 请求所需的官方原生签名模块（`bdms.node`，来自官方汽水音乐桌面版）现在由 `helper/native.cjs` 管理：
+
+- 查找顺序：环境变量 `MYGO_QISHUI_SDK_APP`（可指向 App 安装目录或直接指向 `bdms.node`）→ `/Applications` → `~/Applications`，App 名兼容 `汽水音乐.app` 与 `Soda Music.app`。
+- 首次找到后把该模块连同其同目录供应商依赖（`@rpath` 解析的 `libMetaSecML.dylib` 等，实现在 `helper/native.cjs`）拷贝到 `plugin-data/qishui/auth-sdk/native/`，各文件记录 SHA-256；以后官方 App 更新或被移除时使用已校验的缓存，**插件不会（也不能）在缺少该模块的机器上重新分发它**。
+- 签名校验只要求官方 SDK 本身产出安全参数（至少一个 `x-*` 签名头），适配官方 SDK 的代际变化（x-helios / x-medusa / x-neptune）。
+- 缺少该模块时报独立错误「未找到官方汽水音乐桌面版提供的签名模块」，不再误引导去执行 `node helper/install.cjs`。
 
 ## 0.4.5：歌单编辑补齐（基于 0.4.0 功能接入）
 
@@ -44,7 +105,7 @@
 
 ## 安装
 
-1. 先按下文生成代码包，再在 MyGo → Settings → Plugins → **+** 导入 `plugin-qishui-0.4.5.zip`。本轮未改动已安装插件。
+1. 先按下文生成代码包，再在 MyGo → Settings → Plugins → **+** 导入 `plugin-qishui-0.4.6.zip`。本轮未改动已安装插件。
 2. 安装 **Node.js 22.12+ 和 npm**。播放转换另需 ffmpeg；macOS 可使用 `brew install node ffmpeg`。
 3. 在插件目录执行一次：
 
@@ -62,9 +123,9 @@
    首次认证从官方 CDN 下载固定版本安全 SDK，校验 SHA-256 后缓存。**没有在仓库中分发官方 SDK 或原生二进制。**
 
 4. 在插件设置中允许启动程序（**Node.js → Electron**，播放另用 ffmpeg）。
-5. 手动更新代码后，**⌘Q 完全退出 MyGo 再打开**。登录提示应显示 `[汽水 0.4.5 SDK]`。
+5. 手动更新代码后，**⌘Q 完全退出 MyGo 再打开**。登录提示应显示 `[汽水 0.4.6 SDK]`。
 
-当前仅验证 macOS arm64。读取曲库使用本机 `/Applications/汽水音乐.app/Contents/Resources/app.asar.unpacked/bdms.node` 官方原生 SDK；需要安装官方汽水客户端，但**不读取它已有的 Cookie、账号数据库或浏览器 profile**。其他平台、不同原生 SDK 版本仍需适配。
+当前仅验证 macOS arm64。读取曲库使用官方汽水桌面客户端的原生 SDK（按上文顺序查找，首次成功后缓存到 `plugin-data/qishui/auth-sdk/native/` 并做 SHA-256 校验）；需要安装官方汽水客户端，但**不读取它已有的 Cookie、账号数据库或浏览器 profile**。其他平台、不同原生 SDK 版本仍需适配。
 
 目录分工：
 
@@ -106,7 +167,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_package.
 
 ```sh
 python3 scripts/package.py
-# 输出 .dist/plugin-qishui-0.4.5.zip
+# 输出 .dist/plugin-qishui-0.4.6.zip
 ```
 
 单独验证 SDK 是否能启动并生成安全参数（不会输出二维码 token、Cookie 或账号信息）：
@@ -132,7 +193,7 @@ QISHUI_PLUGIN_SOURCE="$PWD/index.js" go -C "$MYGO_SOURCE" test ./internal/plugin
 
 ```sh
 cp tests/mygo-install-regression_test.go "$MYGO_SOURCE/internal/plugin/qishui_install_test.go"
-QISHUI_PLUGIN_DIR="$PWD" QISHUI_PLUGIN_ZIP="$PWD/.dist/plugin-qishui-0.4.5.zip" \
+QISHUI_PLUGIN_DIR="$PWD" QISHUI_PLUGIN_ZIP="$PWD/.dist/plugin-qishui-0.4.6.zip" \
   go -C "$MYGO_SOURCE" test ./internal/plugin -run TestQishuiInstallArtifacts -count=1 -v
 ```
 

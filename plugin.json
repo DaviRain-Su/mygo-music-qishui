@@ -1,23 +1,18 @@
 {
   "id": "qishui",
   "name": "汽水音乐",
-  "version": "0.4.5",
-  "minAppVersion": "0.1.7",
+  "version": "0.5.2",
+  "minAppVersion": "0.1.22",
   "main": "index.js",
   "playback": "stream",
   "permissions": {
     "network": [
-      "api.qishui.com",
-      "api5-lq.qishui.com",
-      "*.qishui.com"
+      "qishui.com",
+      "*.qishui.com",
+      "beta-luna.douyin.com"
     ],
     "process": [
-      "node",
-      "/opt/homebrew/bin/node",
-      "/usr/local/bin/node",
-      "ffmpeg",
-      "/opt/homebrew/bin/ffmpeg",
-      "/usr/local/bin/ffmpeg"
+      "bin/qishui-helper-*"
     ]
   },
   "navigation": [
@@ -25,6 +20,16 @@
       "builtin": "home",
       "title": "首页",
       "icon": "home"
+    },
+    {
+      "builtin": "stations",
+      "title": "为你推荐",
+      "icon": "radio"
+    },
+    {
+      "page": "listening-modes",
+      "title": "听歌模式",
+      "icon": "radio"
     },
     {
       "page": "discover",
@@ -45,11 +50,6 @@
       "page": "history",
       "title": "最近播放",
       "icon": "calendar"
-    },
-    {
-      "builtin": "stations",
-      "title": "情景电台",
-      "icon": "radio"
     },
     {
       "builtin": "savedAlbums",

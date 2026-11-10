@@ -5,3 +5,7 @@ node_modules/
 .dist/
 __pycache__/
 .worktrees/
+.build/
+vendor/lane128-qishui/dist/
+/bin/
+/runtime/

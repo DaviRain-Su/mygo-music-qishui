@@ -11,7 +11,7 @@ let binary;
 try { binary = resolveElectron(loadRuntime(dataDir)); }
 catch { fail('setup'); process.exit(); }
 const env = { MYGO_QISHUI_HELPER: '1' };
-for (const key of ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'WINDIR', 'LOCALAPPDATA', 'APPDATA', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_RUNTIME_DIR', 'LANG', 'LC_ALL', 'DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS', '__CF_USER_TEXT_ENCODING']) {
+for (const key of ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'WINDIR', 'LOCALAPPDATA', 'APPDATA', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_RUNTIME_DIR', 'LANG', 'LC_ALL', 'DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS', '__CF_USER_TEXT_ENCODING', 'MYGO_QISHUI_SDK_APP']) {
   if (process.env[key]) env[key] = process.env[key];
 }
 // Vendor/browser/native stdout and stderr never share the credential-bearing RPC channel.
